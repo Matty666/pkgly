@@ -1,3 +1,5 @@
+// ABOUTME: Implements the application HTTP tracing middleware and request metrics.
+// ABOUTME: Enriches request spans, access log context, and response bodies.
 use std::{
     future::Future,
     pin::Pin,
@@ -9,7 +11,10 @@ use axum::{
     body::{Body, HttpBody},
     extract::MatchedPath,
 };
-use http::{HeaderValue, Request, Response, header::InvalidHeaderValue};
+use http::{
+    HeaderValue, Request, Response,
+    header::{InvalidHeaderValue, USER_AGENT},
+};
 use opentelemetry::KeyValue;
 use pin_project::pin_project;
 use tower_service::Service;
@@ -18,8 +23,12 @@ use tracing::error;
 use super::{X_REQUEST_ID, response_body::TraceResponseBody};
 use crate::{
     app::{AppMetrics, Pkgly},
-    utils::request_logging::{
-        access_log::AccessLogContext, request_id::RequestId, request_span::RequestSpan,
+    utils::{
+        header::HeaderMapExt,
+        ip_addr::{self, HasForwardedHeader},
+        request_logging::{
+            access_log::AccessLogContext, request_id::RequestId, request_span::RequestSpan,
+        },
     },
 };
 
@@ -96,6 +105,7 @@ where
         let body_size = req.body().size_hint().lower();
 
         let access_log = AccessLogContext::default();
+        enrich_access_log_from_request(&req, &site, &access_log);
         req.extensions_mut().insert(access_log.clone());
 
         // Track active request immediately; guard will decrement at end of stream or on error.
@@ -260,6 +270,22 @@ where
                 Poll::Ready(Err(err))
             }
         }
+    }
+}
+
+fn enrich_access_log_from_request<S, B>(
+    request: &Request<B>,
+    state: &S,
+    access_log: &AccessLogContext,
+) where
+    S: HasForwardedHeader,
+{
+    if let Some(client_address) = ip_addr::extract_ip_as_string(request, state) {
+        access_log.set_client_address(client_address);
+    }
+
+    if let Some(user_agent) = request.headers().get_string_ignore_empty(&USER_AGENT) {
+        access_log.set_user_agent_original(user_agent);
     }
 }
 

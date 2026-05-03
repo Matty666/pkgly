@@ -1,7 +1,15 @@
+// ABOUTME: Tests request logging middleware helpers and HTTP metrics recording.
+// ABOUTME: Uses real metric readers and HTTP request parts to verify emitted data.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
+use axum::{body::Body, extract::ConnectInfo};
+use http::{HeaderName, Request, header::USER_AGENT};
 use opentelemetry::{KeyValue, Value};
 use opentelemetry_sdk::{
     error::OTelSdkResult,
@@ -12,8 +20,22 @@ use opentelemetry_sdk::{
     },
 };
 
-use super::{ActiveRequestGuard, record_http_metrics};
-use crate::app::AppMetrics;
+use super::{ActiveRequestGuard, enrich_access_log_from_request, record_http_metrics};
+use crate::{
+    app::AppMetrics,
+    utils::{ip_addr::HasForwardedHeader, request_logging::access_log::AccessLogContext},
+};
+
+#[derive(Debug)]
+struct TestForwardedState {
+    forwarded_header: Option<HeaderName>,
+}
+
+impl HasForwardedHeader for TestForwardedState {
+    fn forwarded_header(&self) -> Option<&HeaderName> {
+        self.forwarded_header.as_ref()
+    }
+}
 
 #[derive(Clone, Debug)]
 struct SharedReader(Arc<ManualReader>);
@@ -195,4 +217,56 @@ fn request_counter_tracks_completed_requests() {
 
     assert_eq!(req_dp.value(), 1);
     assert_eq!(attr_as_i64(&attrs, "http.response.status_code"), Some(204));
+}
+
+#[test]
+fn access_log_enrichment_prefers_forwarded_header() {
+    let state = TestForwardedState {
+        forwarded_header: Some(HeaderName::from_static("x-forwarded-for")),
+    };
+    let access_log = AccessLogContext::default();
+    let mut request = Request::builder()
+        .uri("/api/test")
+        .header("x-forwarded-for", "198.51.100.10, 203.0.113.12")
+        .header(USER_AGENT, "pkgly-integration/2.0")
+        .body(Body::empty())
+        .expect("request should build");
+    request.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)),
+        8080,
+    )));
+
+    enrich_access_log_from_request(&request, &state, &access_log);
+
+    let snapshot = access_log.snapshot();
+    assert_eq!(
+        snapshot.client_address.as_deref(),
+        Some("198.51.100.10, 203.0.113.12")
+    );
+    assert_eq!(
+        snapshot.user_agent_original.as_deref(),
+        Some("pkgly-integration/2.0")
+    );
+}
+
+#[test]
+fn access_log_enrichment_uses_connection_ip_when_forwarded_header_missing() {
+    let state = TestForwardedState {
+        forwarded_header: Some(HeaderName::from_static("x-forwarded-for")),
+    };
+    let access_log = AccessLogContext::default();
+    let mut request = Request::builder()
+        .uri("/api/test")
+        .body(Body::empty())
+        .expect("request should build");
+    request.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)),
+        8080,
+    )));
+
+    enrich_access_log_from_request(&request, &state, &access_log);
+
+    let snapshot = access_log.snapshot();
+    assert_eq!(snapshot.client_address.as_deref(), Some("10.0.0.5"));
+    assert_eq!(snapshot.user_agent_original, None);
 }

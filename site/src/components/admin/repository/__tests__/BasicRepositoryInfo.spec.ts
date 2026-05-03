@@ -94,7 +94,6 @@ describe("BasicRepositoryInfo", () => {
     });
 
     expect(wrapper.find('[data-testid="repository-info-card"]').exists()).toBe(true);
-    expect(wrapper.find('[data-testid="repository-status-chip"]').text()).toContain("Active");
     expect(wrapper.findAll('[data-testid="repository-meta-item"]').length).toBeGreaterThan(0);
   });
 
@@ -111,7 +110,7 @@ describe("BasicRepositoryInfo", () => {
     expect(wrapper.text()).not.toContain("Repository activation controls are coming soon.");
   });
 
-  it("renders inactive repository status without repository toggle controls", () => {
+  it("renders inactive repository without repository toggle controls", () => {
     const wrapper = mount(BasicRepositoryInfo, {
       props: {
         repository: {
@@ -124,7 +123,6 @@ describe("BasicRepositoryInfo", () => {
       },
     });
 
-    expect(wrapper.find('[data-testid="repository-status-chip"]').text()).toContain("Inactive");
     expect(wrapper.find('[data-testid="repository-toggle"]').exists()).toBe(false);
   });
 

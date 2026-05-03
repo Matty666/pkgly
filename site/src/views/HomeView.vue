@@ -104,13 +104,6 @@
             <v-btn color="primary" variant="text" prepend-icon="mdi-open-in-new" class="text-none">
               Open
             </v-btn>
-            <v-spacer />
-            <v-chip
-              :color="repo.active ? 'success' : 'default'"
-              :variant="repo.active ? 'flat' : 'outlined'"
-              size="small">
-              {{ repo.active ? "Active" : "Inactive" }}
-            </v-chip>
           </v-card-actions>
         </v-card>
       </v-col>

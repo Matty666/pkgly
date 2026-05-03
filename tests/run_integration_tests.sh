@@ -60,6 +60,7 @@ TEST_SUITES:
     helm        Run Helm integration tests
     nuget       Run NuGet integration tests
     web_refresh Run web route refresh integration tests
+    access_logs Run HTTP access log enrichment integration tests
     all         Run all test suites (default)
 
 EXAMPLES:
@@ -117,12 +118,12 @@ while [[ $# -gt 0 ]]; do
             STOP=0
             shift
             ;;
-        maven|npm|docker|docker_proxy|python|python_virtual|php|ruby|go|debian|cargo|helm|nuget|web_refresh)
+        maven|npm|docker|docker_proxy|python|python_virtual|php|ruby|go|debian|cargo|helm|nuget|web_refresh|access_logs)
             TEST_SUITES+=("$1")
             shift
             ;;
         all)
-            TEST_SUITES=(maven npm docker docker_proxy python python_virtual php ruby go debian cargo helm nuget web_refresh)
+            TEST_SUITES=(maven npm docker docker_proxy python python_virtual php ruby go debian cargo helm nuget web_refresh access_logs)
             shift
             ;;
         *)
@@ -135,7 +136,7 @@ done
 
 # Default to all tests if none specified
 if [ ${#TEST_SUITES[@]} -eq 0 ]; then
-    TEST_SUITES=(maven npm docker docker_proxy python python_virtual php ruby go debian cargo helm nuget web_refresh)
+    TEST_SUITES=(maven npm docker docker_proxy python python_virtual php ruby go debian cargo helm nuget web_refresh access_logs)
 fi
 
 # Enable verbose mode
@@ -174,6 +175,21 @@ done
 REUSE_ENV=0
 if [ $ALL_REQUIRED_RUNNING -eq 1 ] && [ $CLEAN -eq 0 ] && [ $BUILD -eq 0 ]; then
     REUSE_ENV=1
+fi
+
+NEEDS_ACCESS_LOG_VOLUME=0
+for suite in "${TEST_SUITES[@]}"; do
+    if [ "$suite" = "access_logs" ]; then
+        NEEDS_ACCESS_LOG_VOLUME=1
+        break
+    fi
+done
+
+if [ $REUSE_ENV -eq 1 ] && [ $NEEDS_ACCESS_LOG_VOLUME -eq 1 ]; then
+    if ! docker compose -f "${DOCKER_DIR}/docker-compose.test.yml" exec -T test-runner \
+       test -d /pkgly-storage 2>/dev/null; then
+        REUSE_ENV=0
+    fi
 fi
 
 if [ $REUSE_ENV -eq 1 ]; then

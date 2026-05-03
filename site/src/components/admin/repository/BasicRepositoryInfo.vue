@@ -11,14 +11,6 @@
           Operational details and current usage metrics.
         </div>
       </div>
-      <v-chip
-        size="small"
-        class="text-uppercase font-weight-medium"
-        :color="statusChip.color"
-        variant="tonal"
-        data-testid="repository-status-chip">
-        {{ statusChip.label }}
-      </v-chip>
     </v-card-title>
 
     <v-card-text>
@@ -117,15 +109,6 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-});
-
-const statusChip = computed(() => {
-  if (!props.repository) {
-    return { label: "Unavailable", color: "warning" as const };
-  }
-  return props.repository.active
-    ? { label: "Active", color: "success" as const }
-    : { label: "Inactive", color: "warning" as const };
 });
 
 function repositoryTypeLabel(repo: RepositoryWithStorageName) {

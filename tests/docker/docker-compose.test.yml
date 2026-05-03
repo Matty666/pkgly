@@ -87,6 +87,7 @@ services:
       - ../integration:/tests:ro
       - ../performance:/perf-tests:ro
       - ../fixtures:/fixtures:ro
+      - test-storage:/pkgly-storage:ro
       - test-results:/results
     command: /bin/bash -c "sleep infinity"
     networks:

@@ -1,3 +1,5 @@
+// ABOUTME: Wraps HTTP response bodies to finish tracing, metrics, and access logs.
+// ABOUTME: Emits completion data when bodies stream fully or are dropped early.
 use std::{
     pin::Pin,
     task::{Context, Poll, ready},
@@ -162,6 +164,8 @@ pub(crate) fn emit_access_log(
 
     let repository_id: Option<Uuid> = snapshot.repository_id;
     let user = snapshot.user;
+    let client_address = snapshot.client_address.as_deref();
+    let user_agent_original = snapshot.user_agent_original.as_deref();
 
     match (repository_id, user) {
         (Some(repository_id), Some(user)) => {
@@ -176,6 +180,8 @@ pub(crate) fn emit_access_log(
                 request_id = %request_id,
                 repository_id = %repository_id,
                 user = %user,
+                client.address = client_address,
+                user_agent.original = user_agent_original,
                 http.response.body.size = response_body_size,
                 "HTTP access"
             );
@@ -191,6 +197,8 @@ pub(crate) fn emit_access_log(
                 duration_ms = duration_ms,
                 request_id = %request_id,
                 repository_id = %repository_id,
+                client.address = client_address,
+                user_agent.original = user_agent_original,
                 http.response.body.size = response_body_size,
                 "HTTP access"
             );
@@ -206,6 +214,8 @@ pub(crate) fn emit_access_log(
                 duration_ms = duration_ms,
                 request_id = %request_id,
                 user = %user,
+                client.address = client_address,
+                user_agent.original = user_agent_original,
                 http.response.body.size = response_body_size,
                 "HTTP access"
             );
@@ -220,6 +230,8 @@ pub(crate) fn emit_access_log(
                 http.response.status_code = status_code,
                 duration_ms = duration_ms,
                 request_id = %request_id,
+                client.address = client_address,
+                user_agent.original = user_agent_original,
                 http.response.body.size = response_body_size,
                 "HTTP access"
             );

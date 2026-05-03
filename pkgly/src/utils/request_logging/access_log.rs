@@ -1,3 +1,5 @@
+// ABOUTME: Stores per-request metadata that is shared across HTTP access logging.
+// ABOUTME: Provides snapshot setters for middleware, authentication, and repository handlers.
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -20,6 +22,8 @@ struct AccessLogData {
     token_id: Option<i32>,
     audit_path: Option<String>,
     audit_query: Option<String>,
+    client_address: Option<String>,
+    user_agent_original: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +40,8 @@ pub struct AccessLogSnapshot {
     pub token_id: Option<i32>,
     pub audit_path: Option<String>,
     pub audit_query: Option<String>,
+    pub client_address: Option<String>,
+    pub user_agent_original: Option<String>,
 }
 
 impl AccessLogContext {
@@ -87,6 +93,14 @@ impl AccessLogContext {
         self.0.lock().audit_query = Some(query.into());
     }
 
+    pub fn set_client_address(&self, client_address: impl Into<String>) {
+        self.0.lock().client_address = Some(client_address.into());
+    }
+
+    pub fn set_user_agent_original(&self, user_agent: impl Into<String>) {
+        self.0.lock().user_agent_original = Some(user_agent.into());
+    }
+
     pub fn snapshot(&self) -> AccessLogSnapshot {
         let locked = self.0.lock();
         AccessLogSnapshot {
@@ -102,6 +116,8 @@ impl AccessLogContext {
             token_id: locked.token_id,
             audit_path: locked.audit_path.clone(),
             audit_query: locked.audit_query.clone(),
+            client_address: locked.client_address.clone(),
+            user_agent_original: locked.user_agent_original.clone(),
         }
     }
 }

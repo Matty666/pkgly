@@ -1,3 +1,5 @@
+// ABOUTME: Tests request logging response bodies and emitted access log events.
+// ABOUTME: Captures tracing output to verify stable log fields and single emission.
 use std::{
     io,
     pin::Pin,
@@ -94,6 +96,8 @@ fn access_log_emits_required_fields_once() {
         let repository_id = uuid::Uuid::new_v4();
         access_log.set_repository_id(repository_id);
         access_log.set_user("alice");
+        access_log.set_client_address("203.0.113.7");
+        access_log.set_user_agent_original("pkgly-test/1.0");
 
         let mut body = Box::pin(TraceResponseBody {
             inner: axum::body::Body::empty(),
@@ -150,6 +154,14 @@ fn access_log_emits_required_fields_once() {
         output.contains("\"user\":\"alice\""),
         "output was: {output}"
     );
+    assert!(
+        output.contains("\"client.address\":\"203.0.113.7\""),
+        "output was: {output}"
+    );
+    assert!(
+        output.contains("\"user_agent.original\":\"pkgly-test/1.0\""),
+        "output was: {output}"
+    );
 }
 
 #[test]
@@ -190,4 +202,12 @@ fn access_log_omits_optional_fields_when_not_present() {
         "output was: {output}"
     );
     assert!(!output.contains("\"user\""), "output was: {output}");
+    assert!(
+        !output.contains("\"client.address\""),
+        "output was: {output}"
+    );
+    assert!(
+        !output.contains("\"user_agent.original\""),
+        "output was: {output}"
+    );
 }

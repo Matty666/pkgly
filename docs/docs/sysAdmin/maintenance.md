@@ -82,6 +82,8 @@ docker compose logs pkgly | grep 'pkgly::audit'
 
 If you run JSON logs, filter on `"target":"pkgly::audit"` and join on `trace_id` when you need to correlate an audit event with lower-level request or tracing data.
 
+HTTP access logs on the `pkgly::access` target include request identity and routing fields such as `trace_id`, `request_id`, `http.request.method`, `http.route`, `url.path`, and `http.response.status_code`. They also include `client.address` when Pkgly can determine it from `X-Forwarded-For` or the connection IP, and `user_agent.original` when the request sends a user-agent header.
+
 ## Browser refresh routing
 
 Pkgly serves the Vue app with history-mode routes. Browser refreshes for paths present in `site/src/router/routes.json` return the SPA `index.html` when the request is a `GET` or `HEAD` with `Accept: text/html`.
