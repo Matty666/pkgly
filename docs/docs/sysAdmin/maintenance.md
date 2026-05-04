@@ -84,6 +84,12 @@ If you run JSON logs, filter on `"target":"pkgly::audit"` and join on `trace_id`
 
 HTTP access logs on the `pkgly::access` target include request identity and routing fields such as `trace_id`, `request_id`, `http.request.method`, `http.route`, `url.path`, and `http.response.status_code`. They also include `client.address` when Pkgly can determine it from `X-Forwarded-For` or the connection IP, and `user_agent.original` when the request sends a user-agent header.
 
+## Storage usage refresh
+
+Pkgly caches each repository's storage usage in the repository row. The background scheduler checks storage usage every 30 seconds, but each repository is recalculated at most once per hour. Repositories with no cached usage are refreshed on the next scheduler tick after startup.
+
+Manual API reads can still request usage with `include_usage=true`, and admins can force recalculation with `refresh_usage=true`.
+
 ## Browser refresh routing
 
 Pkgly serves the Vue app with history-mode routes. Browser refreshes for paths present in `site/src/router/routes.json` return the SPA `index.html` when the request is a `GET` or `HEAD` with `Accept: text/html`.

@@ -1,3 +1,5 @@
+// ABOUTME: Runs periodic background maintenance jobs for repositories.
+// ABOUTME: Ticks frequently while individual jobs decide their own due cadence.
 use chrono::Utc;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -42,6 +44,20 @@ pub fn start_background_scheduler(site: Pkgly) -> JoinHandle<()> {
                 }
                 Err(err) => {
                     warn!(error = %err, "Package retention scheduler tick failed");
+                }
+            }
+
+            match crate::app::storage_usage::storage_usage_scheduler_tick(site.clone(), now).await {
+                Ok(summary) => {
+                    let should_log = summary.refreshed > 0
+                        || summary.missing_repository > 0
+                        || summary.failed > 0;
+                    if should_log {
+                        info!(?summary, "Storage usage scheduler tick completed");
+                    }
+                }
+                Err(err) => {
+                    warn!(error = %err, "Storage usage scheduler tick failed");
                 }
             }
         }

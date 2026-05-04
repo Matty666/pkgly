@@ -1,5 +1,5 @@
-use std::{collections::VecDeque, convert::TryFrom};
-
+// ABOUTME: Exposes repository management and discovery HTTP API routes.
+// ABOUTME: Shapes repository responses and delegates storage usage refresh work.
 use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Response},
@@ -17,10 +17,9 @@ use nr_core::{
         config::RepositoryConfigType,
         project::ProjectResolution,
     },
-    storage::{StorageName, StoragePath},
+    storage::StorageName,
     user::permissions::{HasPermissions, RepositoryActions},
 };
-use nr_storage::{FileType, Storage, StorageFile};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tracing::{instrument, warn};
@@ -32,9 +31,10 @@ use crate::{
         Pkgly, RepositoryStorageName,
         authentication::Authentication,
         responses::{MissingPermission, RepositoryNotFound},
+        storage_usage::{normalize_cached_usage, refresh_repository_storage_usage},
     },
     error::InternalError,
-    repository::{DynRepository, Repository, RepositoryTypeDescription},
+    repository::{Repository, RepositoryTypeDescription},
     utils::ResponseBuilder,
 };
 mod browse;
@@ -590,153 +590,6 @@ mod repository_kind_tests {
     }
 }
 
-async fn compute_repository_storage_usage(site: &Pkgly, repository_id: Uuid) -> Option<u64> {
-    let repository = site.get_repository(repository_id)?;
-    match calculate_repository_storage_usage(&repository).await {
-        Ok(size) => Some(size),
-        Err(err) => {
-            warn!(%repository_id, ?err, "Failed to calculate repository storage usage");
-            None
-        }
-    }
-}
-
-async fn calculate_repository_storage_usage(
-    repository: &DynRepository,
-) -> Result<u64, nr_storage::StorageError> {
-    let storage = repository.get_storage();
-    let repository_id = repository.id();
-
-    if let nr_storage::DynStorage::Local(local) = storage.clone() {
-        match local.repository_size_bytes(repository_id).await {
-            Ok(size) => return Ok(size),
-            Err(err) => {
-                warn!(
-                    %repository_id,
-                    %err,
-                    "Fast local storage usage refresh failed; falling back to metadata traversal"
-                );
-            }
-        }
-    }
-
-    if let nr_storage::DynStorage::S3(s3) = storage.clone() {
-        match s3.repository_size_bytes(repository_id).await {
-            Ok(size) => return Ok(size),
-            Err(err) => {
-                warn!(
-                    %repository_id,
-                    %err,
-                    "Fast S3 storage usage refresh failed; falling back to metadata traversal"
-                );
-            }
-        }
-    }
-
-    calculate_repository_storage_usage_fallback(storage, repository_id).await
-}
-
-async fn calculate_repository_storage_usage_fallback(
-    storage: nr_storage::DynStorage,
-    repository_id: Uuid,
-) -> Result<u64, nr_storage::StorageError> {
-    // Start with root directory
-    let root_path = StoragePath::from("/");
-    let Some(root_entry) = storage.open_file(repository_id, &root_path).await? else {
-        return Ok(0);
-    };
-
-    match root_entry {
-        StorageFile::File { meta, .. } => Ok(meta.file_type.file_size),
-        StorageFile::Directory { files, .. } => {
-            use tokio::task::JoinSet;
-            const MAX_CONCURRENT_TASKS: usize = 20;
-
-            let mut total = 0u64;
-            let mut tasks = JoinSet::new();
-            let mut queue: VecDeque<String> = VecDeque::new();
-
-            for entry in &files {
-                if let FileType::Directory(_) = entry.file_type() {
-                    let mut path = String::from("/");
-                    path.push_str(entry.name());
-                    path.push('/');
-                    queue.push_back(path);
-                }
-            }
-
-            for entry in &files {
-                if let FileType::File(file_meta) = entry.file_type() {
-                    if tasks.len() < MAX_CONCURRENT_TASKS {
-                        let file_size = file_meta.file_size;
-                        tasks.spawn(async move { file_size });
-                    } else {
-                        while let Some(result) = tasks.join_next().await {
-                            total += result.unwrap_or(0);
-                        }
-                        let file_size = file_meta.file_size;
-                        tasks.spawn(async move { file_size });
-                    }
-                }
-            }
-
-            while let Some(path) = queue.pop_front() {
-                let storage_path = StoragePath::from(path.as_str());
-                if let Ok(Some(entry)) = storage.open_file(repository_id, &storage_path).await {
-                    if let StorageFile::Directory { files, .. } = entry {
-                        for file_entry in &files {
-                            match file_entry.file_type() {
-                                FileType::File(file_meta) => {
-                                    if tasks.len() < MAX_CONCURRENT_TASKS {
-                                        let file_size = file_meta.file_size;
-                                        tasks.spawn(async move { file_size });
-                                    } else {
-                                        while let Some(result) = tasks.join_next().await {
-                                            total += result.unwrap_or(0);
-                                        }
-                                        let file_size = file_meta.file_size;
-                                        tasks.spawn(async move { file_size });
-                                    }
-                                }
-                                FileType::Directory(_) => {
-                                    let mut next_path = path.clone();
-                                    next_path.push_str(file_entry.name());
-                                    next_path.push('/');
-                                    queue.push_back(next_path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            while let Some(result) = tasks.join_next().await {
-                total += result.unwrap_or(0);
-            }
-
-            Ok(total)
-        }
-    }
-}
-
-fn normalize_cached_usage(value: Option<i64>) -> Option<u64> {
-    value.and_then(|raw| u64::try_from(raw).ok())
-}
-
-async fn refresh_repository_storage_usage(
-    site: &Pkgly,
-    repository_id: Uuid,
-) -> Result<Option<(u64, chrono::DateTime<chrono::FixedOffset>)>, InternalError> {
-    let Some(usage) = compute_repository_storage_usage(site, repository_id).await else {
-        return Ok(None);
-    };
-
-    let updated_at = DBRepository::update_storage_usage(repository_id, Some(usage), &site.database)
-        .await
-        .map_err(InternalError::from)?;
-
-    Ok(Some((usage, updated_at)))
-}
 #[derive(Debug, Clone, Copy, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct QueryRepositoryNames {

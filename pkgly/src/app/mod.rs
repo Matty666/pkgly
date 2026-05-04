@@ -1,3 +1,5 @@
+// ABOUTME: Defines application modules and shared app-level data structures.
+// ABOUTME: Owns upload state helpers used by repository upload handlers.
 use std::sync::Arc;
 
 use digest::Digest;
@@ -16,6 +18,7 @@ pub mod open_api;
 pub mod request_logging;
 pub mod resources;
 pub mod scheduler;
+pub mod storage_usage;
 pub mod webhooks;
 
 pub mod responses;
