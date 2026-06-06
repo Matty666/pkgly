@@ -57,7 +57,7 @@ const apiUrl = computed(() => `${base.value}/api/v1`);
   }
 
   code {
-    font-family: "Fira Code", "Source Code Pro", monospace;
+    font-family: var(--nr-font-family-mono);
   }
 }
 </style>

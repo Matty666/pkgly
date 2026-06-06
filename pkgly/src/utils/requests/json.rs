@@ -1,3 +1,5 @@
+// ABOUTME: Extracts typed JSON request bodies and returns structured API errors.
+// ABOUTME: Preserves field paths and validation messages for malformed request data.
 use std::borrow::Cow;
 
 use axum::{
@@ -123,11 +125,13 @@ impl IntoResponse for JsonBodyRejection {
             JsonBodyRejection::JsonDataError(err, path) => {
                 let reason: ErrorReason =
                     ErrorReason::from(format!("Error Deserializing JSON: {}", err));
+                let mut msg = err.to_string();
+                if let Some(pos) = msg.find(" at line ") {
+                    msg.truncate(pos);
+                }
                 let body = APIErrorResponse {
                     error: Some(err),
-                    message: Cow::Borrowed(
-                        "Failed to deserialize the JSON body into the target type",
-                    ),
+                    message: Cow::Owned(msg),
                     details: Some(path.to_string()),
                 };
                 ResponseBuilder::bad_request().extension(reason).json(&body)

@@ -81,7 +81,8 @@ init();
 <style scoped lang="scss">
 .contentWithSideBar {
   display: flex;
-  height: 90vh;
+  flex: 1;
+  min-height: 100vh;
   main {
     flex: 1;
     padding: 1rem;
@@ -90,7 +91,7 @@ init();
 
 .contentWithSideBar--admin {
   :deep(.v-card) {
-    box-shadow: none !important;
+    box-shadow: none;
   }
 }
 </style>

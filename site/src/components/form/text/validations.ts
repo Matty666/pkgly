@@ -1,3 +1,5 @@
+// ABOUTME: Defines reusable synchronous and asynchronous form validation rules.
+// ABOUTME: Keeps user field validation aligned with backend identity constraints.
 import { useValidationStore } from "@/stores/validations";
 import type { PasswordRules } from "@/types/base";
 export interface BaseValidationType {
@@ -89,15 +91,34 @@ export const USERNAME_VALIDATIONS: ValidationType[] = [
     message: "Username is available.",
     validate: isUsernameAvailable,
     isAsync: true,
+    ignoreIfOthersFailed: true,
   },
 ];
 export const EMAIL_VALIDATIONS: ValidationType[] = [
-  // TODO: Add email validation
+  {
+    id: "email-min-length",
+    message: "Must be at least 3 characters long.",
+    validate: (value: string) => value.length >= 3,
+    isAsync: false,
+  },
+  {
+    id: "email-max-length",
+    message: "No longer than 32 characters.",
+    validate: (value: string) => value.length <= 32,
+    isAsync: false,
+  },
+  {
+    id: "email-format",
+    message: "Must contain an @ symbol.",
+    validate: (value: string) => value.includes("@"),
+    isAsync: false,
+  },
   {
     id: "email-availability",
     message: "Email is available.",
     validate: isEmailAvailable,
     isAsync: true,
+    ignoreIfOthersFailed: true,
   },
 ];
 

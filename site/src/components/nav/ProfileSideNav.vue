@@ -3,20 +3,20 @@
     <SideNavElement
       to="/profile"
       routeName="profile">
-      <font-awesome-icon icon="fa-solid fa-gear" />
+      <font-awesome-icon icon="fa-solid fa-user" />
       <span>Profile</span>
     </SideNavElement>
     <SideNavElement
       to="/profile/login"
       routeName="profileLogin">
-      <font-awesome-icon icon="fa-solid fa-gear" />
+      <font-awesome-icon icon="fa-solid fa-right-to-bracket" />
       <span>Login</span>
     </SideNavElement>
     <SideNavElement
       to="/profile/tokens"
       routeName="profileTokens"
       :activeTag="profileTokenTag">
-      <font-awesome-icon icon="fa-solid fa-gear" />
+      <font-awesome-icon icon="fa-solid fa-key" />
       <span>Tokens</span>
     </SideNavElement>
   </SideNav>

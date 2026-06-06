@@ -144,7 +144,7 @@ pub async fn get_user_permissions(
 pub async fn create_user(
     auth: Authentication,
     State(site): State<Pkgly>,
-    JsonBody(user): JsonBody<NewUserRequest>,
+    JsonBody(mut user): JsonBody<NewUserRequest>,
 ) -> Result<Response, InternalError> {
     if !auth.is_admin_or_user_manager() {
         return Ok(MissingPermission::UserManager.into_response());
@@ -154,6 +154,12 @@ pub async fn create_user(
     }
     if user_utils::is_email_taken(&user.email, &site.database).await? {
         return Ok(ConflictResponse::from("email").into_response());
+    }
+    if let Some(ref raw_password) = user.password {
+        let Some(encrypted) = password::encrypt_password(raw_password) else {
+            return Ok(ResponseBuilder::bad_request().body("Failed to encrypt password"));
+        };
+        user.password = Some(encrypted);
     }
     let user = user.insert(site.as_ref()).await?;
     Ok(ResponseBuilder::ok().json(&user))

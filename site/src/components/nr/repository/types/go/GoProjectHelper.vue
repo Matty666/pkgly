@@ -277,7 +277,7 @@ const copyModDownloadCommand = () => {
       background-color: var(--color-background-secondary);
       padding: 0.5rem;
       border-radius: var(--border-radius);
-      font-family: var(--font-family-mono);
+      font-family: var(--nr-font-family-mono);
       font-size: 0.85rem;
       color: var(--color-text-primary);
       border: 1px solid var(--color-border);

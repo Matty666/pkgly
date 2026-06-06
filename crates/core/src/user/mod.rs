@@ -1,3 +1,5 @@
+// ABOUTME: Defines validated user identity value types, scopes, and permissions.
+// ABOUTME: Enforces shared username and email constraints during deserialization.
 use digestible::Digestible;
 use nr_macros::{NuType, SerdeViaStr};
 use sqlx::prelude::Type;
@@ -61,9 +63,9 @@ test_validations! {
 
 #[derive(Debug, Error)]
 pub enum InvalidEmail {
-    #[error("Username is too short, must be at least 3 got {0} characters")]
+    #[error("Email is too short, must be at least 3 got {0} characters")]
     TooShort(usize),
-    #[error("Username is too long, must be less than 32 got {0} characters")]
+    #[error("Email is too long, must be less than 32 got {0} characters")]
     TooLong(usize),
     #[error("Missing @ symbol in email")]
     MissingAt,

@@ -121,7 +121,7 @@ if (!site.siteInfo) {
 }
 const passwordRules = computed(() => site.getPasswordRulesOrDefault());
 
-const setPassword = ref(false);
+const setPassword = ref(true);
 
 const password: Ref<string | undefined> = ref(undefined);
 

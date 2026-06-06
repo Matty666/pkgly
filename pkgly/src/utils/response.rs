@@ -1,3 +1,5 @@
+// ABOUTME: Exposes shared response builders, errors, and conflict payload helpers.
+// ABOUTME: Provides consistent HTTP responses across application API handlers.
 pub mod builder;
 
 use std::{borrow::Cow, error::Error};
@@ -6,6 +8,8 @@ pub use builder::ResponseBuilder;
 use derive_more::From;
 pub mod api_error_response;
 pub mod conflict;
+#[cfg(test)]
+mod tests;
 pub trait IntoErrorResponse: Error + Send + Sync {
     /// Converts the error into a response
     ///

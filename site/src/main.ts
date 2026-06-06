@@ -37,6 +37,7 @@ import {
   faCheckCircle,
   faFile,
   faFolder,
+  faKey,
 } from "@fortawesome/free-solid-svg-icons";
 
 import { autoAnimatePlugin } from "@formkit/auto-animate/vue";
@@ -82,6 +83,7 @@ library.add(faCircleXmark);
 library.add(faCheckCircle);
 library.add(faFile);
 library.add(faFolder);
+library.add(faKey);
 app.use(createMetaManager());
 app.use(pinia);
 app.use(vuetify);

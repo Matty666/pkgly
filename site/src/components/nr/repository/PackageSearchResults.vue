@@ -201,7 +201,7 @@ code {
 
 .package-results__path {
   display: block;
-  font-family: "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--nr-font-family-mono);
 }
 
 @media (max-width: 768px) {

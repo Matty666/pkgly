@@ -1,3 +1,5 @@
+// ABOUTME: Builds structured HTTP conflict responses for unique-field collisions.
+// ABOUTME: Names conflicting fields so clients can show actionable feedback.
 use std::borrow::Cow;
 
 use axum::response::{IntoResponse, Response};
@@ -43,7 +45,7 @@ impl utoipa::IntoResponses for ConflictResponse {
 
 fn example() -> Value {
     let response: APIErrorResponse<&str, ()> = APIErrorResponse {
-        message: "Conflict".into(),
+        message: "Some_Field already exists".into(),
         details: Some("Some_Field"),
         error: None,
     };
@@ -67,8 +69,9 @@ impl From<String> for ConflictResponse {
 
 impl IntoResponse for ConflictResponse {
     fn into_response(self) -> Response {
+        let msg = format!("{} already exists", self.field);
         let response: APIErrorResponse<&str, ()> = APIErrorResponse {
-            message: "Conflict".into(),
+            message: msg.into(),
             details: Some(self.field.as_ref()),
             error: None,
         };

@@ -1,6 +1,9 @@
+// ABOUTME: Verifies user creation form layout, behavior, and API error feedback.
+// ABOUTME: Covers password controls and field-specific user creation failures.
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, ref } from "vue";
+import http from "@/http";
 
 vi.mock("@vue/devtools-kit", () => ({}));
 
@@ -78,6 +81,7 @@ let UserCreateView: any;
 beforeEach(async () => {
   mockAlerts.success.mockReset();
   mockAlerts.error.mockReset();
+  vi.mocked(http.post).mockReset();
   const module = await import("@/views/admin/user/UserCreateView.vue");
   UserCreateView = module.default;
 });
@@ -161,7 +165,8 @@ const vuetifyStubs = {
   }),
   "v-form": defineComponent({
     emits: ["submit"],
-    template: "<form data-testid='user-create-form'><slot /></form>",
+    template:
+      "<form data-testid='user-create-form' @submit.prevent=\"$emit('submit', $event)\"><slot /></form>",
   }),
   "v-row": defineComponent({
     template: "<div class='v-row'><slot /></div>",
@@ -183,6 +188,12 @@ const vuetifyStubs = {
   }),
   "v-divider": defineComponent({
     template: "<hr class='v-divider' />",
+  }),
+  "v-expand-transition": defineComponent({
+    template: "<div><slot /></div>",
+  }),
+  "v-icon": defineComponent({
+    template: "<span><slot /></span>",
   }),
 };
 
@@ -218,5 +229,46 @@ describe("UserCreateView.vue", () => {
     expect(wrapper.find('[data-testid="password-input"]').exists()).toBe(false);
     await wrapper.get('input[type="checkbox"]').setValue(true);
     expect(wrapper.find('[data-testid="password-input"]').exists()).toBe(true);
+  });
+
+  it("shows the conflicting username returned by the create API", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.mocked(http.post).mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 409,
+        data: {
+          message: "username already exists",
+          details: "username",
+        },
+      },
+      toJSON: () => ({ status: 409 }),
+    });
+    const wrapper = mount(UserCreateView, {
+      global: {
+        stubs: {
+          ...vuetifyStubs,
+          ...formFieldStubs,
+        },
+      },
+    });
+
+    const inputs = wrapper.findAll('input[type="text"], input:not([type])');
+    await inputs[0]!.setValue("Test User");
+    await wrapper.get("#email").setValue("test@example.com");
+    await wrapper.get("#username").setValue("test1");
+    await wrapper.get('[data-testid="user-create-form"]').trigger("submit");
+    await flushPromises();
+
+    expect(http.post).toHaveBeenCalledWith("/api/user-management/create", {
+      name: "Test User",
+      email: "test@example.com",
+      username: "test1",
+      password: undefined,
+    });
+    expect(wrapper.get('[data-testid="user-create-error"]').text()).toContain(
+      "Username already exists",
+    );
+    consoleError.mockRestore();
   });
 });
