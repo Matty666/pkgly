@@ -10,7 +10,10 @@ use nr_core::{
     },
     repository::Visibility,
     storage::StorageName,
-    user::{Email, Username, permissions::RepositoryActions},
+    user::{
+        Email, Username,
+        permissions::{HasPermissions, InitialUserPermissions, RepositoryActions},
+    },
 };
 use once_cell::sync::Lazy;
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -280,5 +283,108 @@ async fn virtual_repository_auth_checks_read_permission_on_virtual_repo() {
     assert!(
         allowed,
         "expected read permission to be granted via virtual repository permissions"
+    );
+}
+
+#[tokio::test]
+async fn default_repository_actions_grants_basic_auth_read() {
+    let _guard = DB_LOCK.lock().await;
+    let db = fresh_db().await;
+
+    let repo_id = Uuid::new_v4();
+    let user = NewUserRequest {
+        name: "Default Read User".to_string(),
+        username: Username::new("default-read-user".to_string()).expect("username"),
+        email: Some(Email::new("default-read@example.invalid".to_string()).expect("email")),
+        password: Some("password".to_string()),
+        permissions: Some(InitialUserPermissions {
+            admin: false,
+            user_manager: false,
+            system_manager: false,
+            default_repository_actions: vec![RepositoryActions::Read],
+        }),
+    }
+    .insert(&db.pool)
+    .await
+    .expect("insert user");
+
+    let auth = RepositoryAuthentication::Basic(None, user.into());
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let storage_name = StorageName::new("primary".to_string()).expect("storage name");
+    let storage = NewDBStorage::new(
+        "Local".into(),
+        storage_name,
+        serde_json::json!({
+            "type": "Local",
+            "settings": {
+                "path": temp_dir.path().to_string_lossy()
+            }
+        }),
+    )
+    .insert(&db.pool)
+    .await
+    .expect("insert storage")
+    .expect("storage row");
+
+    sqlx::query(
+        "INSERT INTO repositories (id, storage_id, name, repository_type, active) VALUES ($1, $2, $3, $4, true)",
+    )
+    .bind(repo_id)
+    .bind(storage.id)
+    .bind("private-repo")
+    .bind("npm")
+    .execute(&db.pool)
+    .await
+    .expect("insert repository");
+
+    let can_read = crate::repository::utils::can_read_repository(
+        &auth,
+        Visibility::Private,
+        repo_id,
+        &db.pool,
+    )
+    .await
+    .expect("permission check");
+    assert!(
+        can_read,
+        "default Read should grant read access on private repo"
+    );
+
+    let can_write = auth
+        .has_action(RepositoryActions::Write, repo_id, &db.pool)
+        .await
+        .expect("permission check");
+    assert!(!can_write, "default Read should not grant write access");
+
+    NewUserRepositoryPermissions {
+        user_id: auth.get_user_id().expect("user id"),
+        repository_id: repo_id,
+        actions: vec![RepositoryActions::Write],
+    }
+    .insert(&db.pool)
+    .await
+    .expect("insert repo permissions");
+
+    let can_read_after_explicit = crate::repository::utils::can_read_repository(
+        &auth,
+        Visibility::Private,
+        repo_id,
+        &db.pool,
+    )
+    .await
+    .expect("permission check");
+    assert!(
+        !can_read_after_explicit,
+        "explicit Write-only should override default Read"
+    );
+
+    let can_write_after_explicit = auth
+        .has_action(RepositoryActions::Write, repo_id, &db.pool)
+        .await
+        .expect("permission check");
+    assert!(
+        can_write_after_explicit,
+        "explicit Write should grant write access"
     );
 }

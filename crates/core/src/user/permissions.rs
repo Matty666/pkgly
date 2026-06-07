@@ -88,14 +88,37 @@ pub trait HasPermissions {
         repository: Uuid,
         db: &PgPool,
     ) -> Result<bool, sqlx::Error> {
-        if self.is_admin_or_system_manager() {
-            return Ok(true);
-        }
-        let Some(user_id) = self.user_id() else {
-            return Ok(false);
-        };
-        UserRepositoryPermissions::has_repository_action(user_id, repository, action, db).await
+        check_user_repository_action(
+            self.get_permissions().as_ref(),
+            self.user_id(),
+            action,
+            repository,
+            db,
+        )
+        .await
     }
+}
+
+pub async fn check_user_repository_action(
+    permissions: Option<&UserPermissions>,
+    user_id: Option<i32>,
+    action: RepositoryActions,
+    repository: Uuid,
+    db: &PgPool,
+) -> Result<bool, sqlx::Error> {
+    if permissions.is_some_and(|p| p.admin || p.system_manager) {
+        return Ok(true);
+    }
+    let Some(uid) = user_id else {
+        return Ok(false);
+    };
+    if let Some(explicit) = UserRepositoryPermissions::get_actions(uid, repository, db).await? {
+        return Ok(explicit.contains(&action));
+    }
+    if let Some(perms) = permissions {
+        return Ok(perms.default_repository_actions.contains(&action));
+    }
+    Ok(false)
 }
 /// Checks if the Auth Token has the scope for the action and that the user has permission for it.
 ///

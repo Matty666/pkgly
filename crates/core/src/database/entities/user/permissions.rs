@@ -22,13 +22,12 @@ pub struct UserRepositoryPermissions {
 }
 
 impl UserRepositoryPermissions {
-    pub async fn has_repository_action(
+    pub async fn get_actions(
         user_id: i32,
         repository: Uuid,
-        action: RepositoryActions,
         database: &PgPool,
-    ) -> sqlx::Result<bool> {
-        let select = SelectQueryBuilder::with_columns(
+    ) -> sqlx::Result<Option<Vec<RepositoryActions>>> {
+        SelectQueryBuilder::with_columns(
             Self::table_name(),
             vec![UserRepositoryPermissionsColumn::Actions],
         )
@@ -39,8 +38,16 @@ impl UserRepositoryPermissions {
         )
         .query_scalar::<Vec<RepositoryActions>>()
         .fetch_optional(database)
-        .await?;
-        let Some(actions) = select else {
+        .await
+    }
+
+    pub async fn has_repository_action(
+        user_id: i32,
+        repository: Uuid,
+        action: RepositoryActions,
+        database: &PgPool,
+    ) -> sqlx::Result<bool> {
+        let Some(actions) = Self::get_actions(user_id, repository, database).await? else {
             return Ok(false);
         };
         Ok(actions.contains(&action))

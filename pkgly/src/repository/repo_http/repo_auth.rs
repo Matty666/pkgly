@@ -2,11 +2,9 @@ use axum::extract::{FromRef, FromRequestParts};
 use chrono::Utc;
 use http::request::Parts;
 use nr_core::{
-    database::entities::user::{
-        UserSafeData, UserType, auth_token::AuthToken, permissions::UserRepositoryPermissions,
-    },
+    database::entities::user::{UserSafeData, UserType, auth_token::AuthToken},
     user::permissions::{
-        HasPermissions, RepositoryActions, UserPermissions,
+        HasPermissions, RepositoryActions, UserPermissions, check_user_repository_action,
         does_user_and_token_have_repository_action,
     },
 };
@@ -57,7 +55,7 @@ impl RepositoryAuthentication {
                     user,
                     token,
                     action,
-                    repository_id,
+                    effective_repository_id,
                     database,
                 )
                 .await
@@ -140,16 +138,11 @@ impl HasPermissions for RepositoryAuthentication {
         db: &PgPool,
     ) -> Result<bool, sqlx::Error> {
         let (auth, effective_repository_id) = unwrap_virtual_for_action(self, action, repository);
-        if auth.is_admin_or_system_manager() {
-            return Ok(true);
-        }
-        let Some(user_id) = auth.user_id() else {
-            return Ok(false);
-        };
-        UserRepositoryPermissions::has_repository_action(
-            user_id,
-            effective_repository_id,
+        check_user_repository_action(
+            auth.get_permissions().as_ref(),
+            auth.user_id(),
             action,
+            effective_repository_id,
             db,
         )
         .await

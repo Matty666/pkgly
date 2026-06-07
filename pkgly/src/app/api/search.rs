@@ -4,15 +4,16 @@ use axum::{
     routing::get,
 };
 use chrono::{DateTime, FixedOffset};
-use nr_core::{
-    database::entities::repository::DBRepositoryWithStorageName, repository::Visibility,
-};
+use nr_core::database::entities::repository::DBRepositoryWithStorageName;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use uuid::Uuid;
 
 use crate::{
-    app::Pkgly, error::InternalError, repository::Repository, search::PackageSearchRepository,
+    app::{Pkgly, authentication::Authentication},
+    error::InternalError,
+    repository::{Repository, utils::can_read_repository_with_auth},
+    search::PackageSearchRepository,
     utils::ResponseBuilder,
 };
 
@@ -119,6 +120,7 @@ pub(crate) async fn execute_repository_search<B: SearchBackend + ?Sized>(
 )]
 async fn search_packages(
     State(site): State<Pkgly>,
+    auth: Option<Authentication>,
     Query(params): Query<PackageSearchQuery>,
 ) -> Result<Response, InternalError> {
     let raw_query = params.q.trim();
@@ -147,7 +149,16 @@ async fn search_packages(
             continue;
         };
 
-        if matches!(info.visibility, Visibility::Hidden) {
+        let auth_config = site.get_repository_auth_config(info.id).await?;
+        if !can_read_repository_with_auth(
+            &auth,
+            info.visibility,
+            info.id,
+            site.as_ref(),
+            &auth_config,
+        )
+        .await?
+        {
             continue;
         }
 
