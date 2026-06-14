@@ -233,9 +233,6 @@ async fn handle_docker_v2_catchall(
         docker_scope: Some(docker_scope.clone()),
     };
 
-    // Capture request headers before forwarding (request is consumed below)
-    let request_headers = request.headers().clone();
-
     // Forward to the core handler logic
     let site_for_challenge = site.clone();
     let response =
@@ -249,12 +246,8 @@ async fn handle_docker_v2_catchall(
         } else {
             &["pull", "push"][..]
         };
-        let challenge = build_docker_bearer_challenge(
-            &site_for_challenge,
-            Some(&request_headers),
-            &docker_scope,
-            actions,
-        );
+        let challenge =
+            build_docker_bearer_challenge(&site_for_challenge, None, &docker_scope, actions);
         let body = docker_unauthorized_body(&docker_scope, actions);
         let (parts, _) = response.into_parts();
         let mut builder = ResponseBuilder::unauthorized()
