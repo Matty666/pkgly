@@ -46,11 +46,76 @@ fn normalize_routes_retains_existing_entries() {
 }
 
 #[test]
-fn derive_request_base_path_strips_request_path_suffix() {
-    let uri_path = "/repositories/storage/python-proxy/simple/pkg/";
+fn derive_request_base_path_restores_canonical_prefix_for_nested_uri() {
+    let uri_path = "/test-storage/python-proxy/simple/pkg/";
     let storage_path = StoragePath::from("simple/pkg/");
+
     let base = derive_request_base_path(uri_path, &storage_path).expect("base path");
-    assert_eq!(base, "/repositories/storage/python-proxy");
+
+    assert_eq!(base, "/repositories/test-storage/python-proxy");
+}
+
+#[test]
+fn derive_request_base_path_does_not_double_prefix_canonical_uri() {
+    let uri_path = "/repositories/test-storage/python-proxy/simple/pkg/";
+    let storage_path = StoragePath::from("simple/pkg/");
+
+    let base = derive_request_base_path(uri_path, &storage_path).expect("base path");
+
+    assert_eq!(base, "/repositories/test-storage/python-proxy");
+}
+
+#[test]
+fn nested_virtual_proxy_rewrite_uses_virtual_repository_base() {
+    let upstream = Url::parse("https://files.pythonhosted.org/packages/demo/demo-1.0.whl")
+        .expect("upstream url");
+
+    let html = rewrite_simple_html(
+        br#"<a href="https://files.pythonhosted.org/packages/demo/demo-1.0.whl?download=1#sha256=abc">demo</a>"#,
+        "/repositories/test-storage/python-virtual",
+        &upstream,
+    )
+    .expect("valid html");
+
+    assert_eq!(
+        std::str::from_utf8(&html).expect("rewritten html"),
+        r#"<a href="/repositories/test-storage/python-virtual/packages/demo/demo-1.0.whl?download=1#sha256=abc">demo</a>"#
+    );
+}
+
+#[test]
+fn direct_compatibility_proxy_rewrite_uses_proxy_repository_base() {
+    let upstream = Url::parse("https://files.pythonhosted.org/packages/demo/demo-1.0.whl")
+        .expect("upstream url");
+
+    let html = rewrite_simple_html(
+        br#"<a href="https://files.pythonhosted.org/packages/demo/demo-1.0.whl?download=1#sha256=def">demo</a>"#,
+        "/repositories/test-storage/python-proxy",
+        &upstream,
+    )
+    .expect("valid html");
+
+    assert_eq!(
+        std::str::from_utf8(&html).expect("rewritten html"),
+        r#"<a href="/repositories/test-storage/python-proxy/packages/demo/demo-1.0.whl?download=1#sha256=def">demo</a>"#
+    );
+}
+
+#[test]
+fn hosted_proxy_rewrite_preserves_canonical_base_for_get_and_head_contexts() {
+    let upstream = Url::parse("https://files.pythonhosted.org/packages/demo/demo-1.0.whl")
+        .expect("upstream url");
+    let body = br#"<a href="https://files.pythonhosted.org/packages/demo/demo-1.0.whl?download=1#sha256=123">demo</a>"#;
+    let get_html = rewrite_simple_html(body, "/repositories/test-storage/python-proxy", &upstream)
+        .expect("valid GET html");
+    let head_html = rewrite_simple_html(body, "/repositories/test-storage/python-proxy", &upstream)
+        .expect("valid HEAD html");
+
+    assert_eq!(get_html, head_html);
+    assert_eq!(
+        std::str::from_utf8(&get_html).expect("rewritten html"),
+        r#"<a href="/repositories/test-storage/python-proxy/packages/demo/demo-1.0.whl?download=1#sha256=123">demo</a>"#
+    );
 }
 
 fn metadata_path() -> StoragePath {

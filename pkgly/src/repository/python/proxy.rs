@@ -777,14 +777,20 @@ fn derive_request_base_path(uri_path: &str, path: &StoragePath) -> Option<String
     let storage = path.to_string();
     let storage_trimmed = storage.trim_end_matches('/');
     if storage_trimmed.is_empty() {
-        return Some(uri_trimmed.to_string());
+        return Some(normalize_repository_base(uri_trimmed));
     }
-    let suffix = format!("/{}", storage_trimmed);
+    let suffix = format!("/{storage_trimmed}");
     let base = uri_trimmed.strip_suffix(&suffix)?;
-    if base.is_empty() {
-        return Some("/".to_string());
+    Some(normalize_repository_base(base))
+}
+
+fn normalize_repository_base(base: &str) -> String {
+    let base = base.trim_end_matches('/');
+    if base == "/repositories" || base.starts_with("/repositories/") {
+        base.to_string()
+    } else {
+        format!("/repositories{base}")
     }
-    Some(base.to_string())
 }
 
 fn resolve_upstream_link(original: &str, upstream_base: &Url) -> Option<Url> {
