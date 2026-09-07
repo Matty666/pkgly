@@ -1,7 +1,8 @@
 use regex::Regex;
 use std::sync::LazyLock;
+use url::Url;
 
-use crate::repository::python::utils::html_escape;
+use crate::repository::python::utils::{html_escape, normalize_package_name};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimpleIndexLink {
@@ -66,11 +67,21 @@ fn html_unescape_basic(input: &str) -> String {
 
 pub fn build_simple_index_html(
     display_name: &str,
+    canonical_repository_base: &str,
     member_links: Vec<(u32, String, Vec<SimpleIndexLink>)>,
 ) -> String {
+    let normalized_package = normalize_package_name(display_name);
     let mut rows = Vec::new();
     for (priority, member_name, links) in member_links {
         for link in links {
+            let link = SimpleIndexLink {
+                href: canonicalize_member_link(
+                    &link.href,
+                    canonical_repository_base,
+                    &normalized_package,
+                ),
+                ..link
+            };
             rows.push((priority, member_name.clone(), link));
         }
     }
@@ -120,4 +131,49 @@ pub fn build_simple_index_html(
 
 fn dedup_key(href: &str) -> String {
     href.split('#').next().unwrap_or(href).to_string()
+}
+
+fn canonicalize_member_link(
+    href: &str,
+    canonical_repository_base: &str,
+    normalized_package: &str,
+) -> String {
+    if is_absolute_external_link(href) {
+        return href.to_string();
+    }
+
+    let canonical_prefix = format!("{canonical_repository_base}/");
+    if href.starts_with('/') {
+        if href.starts_with(&canonical_prefix) {
+            return href.to_string();
+        }
+        return format!("{canonical_repository_base}/{}", &href[1..]);
+    }
+
+    let synthetic_base =
+        format!("https://pkgly.invalid{canonical_repository_base}/simple/{normalized_package}/");
+    let Ok(base) = Url::parse(&synthetic_base) else {
+        return href.to_string();
+    };
+    let Ok(resolved) = base.join(href) else {
+        return href.to_string();
+    };
+    render_local_url(&resolved)
+}
+
+fn is_absolute_external_link(href: &str) -> bool {
+    Url::parse(href).is_ok_and(|url| !url.scheme().is_empty()) || href.starts_with("//")
+}
+
+fn render_local_url(url: &Url) -> String {
+    let mut href = url.path().to_string();
+    if let Some(query) = url.query() {
+        href.push('?');
+        href.push_str(query);
+    }
+    if let Some(fragment) = url.fragment() {
+        href.push('#');
+        href.push_str(fragment);
+    }
+    href
 }
