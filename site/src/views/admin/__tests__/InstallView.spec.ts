@@ -1,6 +1,10 @@
+// ABOUTME: Verifies first-run administrator account setup and password validation.
+// ABOUTME: Covers form availability and rejects mismatched confirmation values.
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { defineComponent } from "vue";
+import http from "@/http";
 
 vi.mock("@vue/devtools-kit", () => ({}));
 
@@ -17,10 +21,21 @@ vi.mock("@/router", () => ({
 }));
 
 const fieldStub = {
-  template: `<label class="form-field" :id="$attrs.id"><slot /></label>`,
+  template: `<label class="form-field"><slot /><input :id="$attrs.id" :value="modelValue" @input="$emit('update:modelValue', $event.target.value)" /></label>`,
   props: ["modelValue"],
   emits: ["update:modelValue"],
 };
+
+const passwordFieldStub = defineComponent({
+  props: ["id", "modelValue", "type"],
+  emits: ["update:modelValue"],
+  template: `<label><slot name="label" /><input :id="id" :type="type" :value="modelValue" @input="$emit('update:modelValue', $event.target.value)" /><slot /></label>`,
+});
+
+const submitButtonStub = defineComponent({
+  props: ["disabled"],
+  template: `<button type="submit" :disabled="disabled"><slot /></button>`,
+});
 
 const localStorageStub = vi.hoisted(() => {
   const stub = {
@@ -31,9 +46,16 @@ const localStorageStub = vi.hoisted(() => {
     key: vi.fn(),
     length: 0,
   };
-  (globalThis as any).localStorage = stub;
   const existingWindow = (globalThis as any).window ?? {};
-  (globalThis as any).window = { ...existingWindow, localStorage: stub };
+  Object.defineProperty(existingWindow, "localStorage", {
+    configurable: true,
+    value: stub,
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: stub,
+  });
+  (globalThis as any).window = existingWindow;
   return stub;
 });
 
@@ -48,7 +70,7 @@ describe("InstallView.vue", () => {
       global: {
         stubs: {
           TextInput: fieldStub,
-          PasswordInput: fieldStub,
+          NewPasswordInput: fieldStub,
           SubmitButton: {
             template: `<button><slot /></button>`,
             props: ["disabled"],
@@ -69,13 +91,13 @@ describe("InstallView.vue", () => {
     }
   });
 
-  it("asks only for username and password during first admin setup", async () => {
+  it("uses password rules with confirmation during first admin setup", async () => {
     const InstallView = (await import("@/views/admin/InstallView.vue")).default;
     const wrapper = mount(InstallView, {
       global: {
         stubs: {
           TextInput: fieldStub,
-          PasswordInput: fieldStub,
+          NewPasswordInput: fieldStub,
           SubmitButton: {
             template: `<button><slot /></button>`,
             props: ["disabled"],
@@ -88,8 +110,47 @@ describe("InstallView.vue", () => {
 
     expect(wrapper.find("#username").exists()).toBe(true);
     expect(wrapper.find("#password").exists()).toBe(true);
+    expect(wrapper.text()).toContain("Create the first administrator account");
     expect(wrapper.find("#confirmPassword").exists()).toBe(false);
     expect(wrapper.find("#name").exists()).toBe(false);
     expect(wrapper.find("#email").exists()).toBe(false);
+  });
+
+  it("disables install when password confirmation changes after a valid match", async () => {
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const InstallView = (await import("@/views/admin/InstallView.vue")).default;
+    const wrapper = mount(InstallView, {
+      global: {
+        stubs: {
+          TextInput: fieldStub,
+          "v-text-field": passwordFieldStub,
+          InputRequirements: true,
+          "font-awesome-icon": true,
+          SubmitButton: submitButtonStub,
+        },
+      },
+    });
+
+    await flushPromises();
+    await wrapper.get("#username input").setValue("admin");
+    await wrapper.get("input#password").setValue("ValidPassword123!");
+    await wrapper.get("input#password-confirm").setValue("ValidPassword123!");
+    await flushPromises();
+    expect(wrapper.get('button[type="submit"]').element.disabled).toBe(false);
+
+    await wrapper.get("input#password-confirm").setValue("OtherPassword123!");
+    await flushPromises();
+
+    expect(wrapper.get('button[type="submit"]').element.disabled).toBe(true);
+    expect(wrapper.get<HTMLInputElement>("input#password").element.value).toBe("ValidPassword123!");
+    expect(wrapper.get<HTMLInputElement>("input#password-confirm").element.value).toBe("OtherPassword123!");
+    expect(wrapper.text()).toContain("Passwords do not match");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(http.post).not.toHaveBeenCalled();
+    await wrapper.get("input#password-confirm").setValue("ValidPassword123!");
+    await flushPromises();
+    expect(wrapper.get('button[type="submit"]').element.disabled).toBe(false);
+    debug.mockRestore();
   });
 });

@@ -287,8 +287,8 @@ describe("HomeView.vue", () => {
 
     expect(wrapper.get('[data-testid="repository-summary"]').text()).toBe("2 repositories");
     expect(wrapper.text()).toContain("Hosted");
-    expect(wrapper.text()).toContain("Secured");
-    expect(wrapper.text()).toContain("Unsecured");
+    expect(wrapper.text()).toContain("Private");
+    expect(wrapper.text()).toContain("Public");
     expect(wrapper.text()).toContain("Active");
     expect(wrapper.text()).toContain("Inactive");
     expect(wrapper.text()).not.toContain("Open");

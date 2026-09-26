@@ -61,9 +61,7 @@ function arraysEqual<T>(left: T[], right: T[]): boolean {
 }
 
 async function save() {
-  console.log("Saving User Permissions");
   const newPermissions = userPermissions.value;
-  console.log(`Saving: ${JSON.stringify(newPermissions)}`);
   try {
     await http.put(`/api/user-management/update/${props.user.id}/permissions`, newPermissions);
     alerts.success("Permissions saved", "Permissions have been saved.");

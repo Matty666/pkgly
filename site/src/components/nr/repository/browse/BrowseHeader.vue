@@ -59,7 +59,6 @@ function buildPath() {
       path: path,
     });
   }
-  console.log(pathElements.value);
 }
 watch(
   () => router.currentRoute.value.params.catchAll,

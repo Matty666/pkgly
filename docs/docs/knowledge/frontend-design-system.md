@@ -37,7 +37,7 @@ Reusable components live in `site/src/components/ui/` and `site/src/components/l
 
 | Component | Path | Purpose |
 | --- | --- | --- |
-| `StatusChip` | `components/ui/StatusChip.vue` | Unified `Secured/Unsecured` + `Active/Inactive` badges. |
+| `StatusChip` | `components/ui/StatusChip.vue` | `Private/Public` access badges based on authentication and visibility, plus `Active/Inactive` badges. |
 | `MonoValue` | `components/ui/MonoValue.vue` | Truncated hash/digest display with copy-to-clipboard. |
 | `TableSkeleton` | `components/ui/TableSkeleton.vue` | Loading placeholder that mimics table rows. |
 | `EmptyState` | `components/ui/EmptyState.vue` | Icon + title + message + optional action for empty collections. |
@@ -49,3 +49,10 @@ Reusable components live in `site/src/components/ui/` and `site/src/components/l
 - Components are **token-driven** (`var(--nr-*)`) so they adapt to the palette automatically.
 - Each primitive has a co-located `__tests__/*.spec.ts` (Vitest + `@vue/test-utils`).
 - When adding a new status/badge/tone, add a token to `tokens.scss` rather than a hardcoded color.
+
+### Form and table behavior
+
+- Disabled primary buttons with flat or elevated variants use a tonal fill and dark primary text. The global override targets Vuetify's `bg-primary` class.
+- Password confirmation mismatches invalidate the submitted value while preserving both typed fields for correction. Installation stays disabled until the password is valid and both fields match.
+- Casbin model and policy remain editable in the administrator's OAuth2 settings when OAuth2 is enabled.
+- Package page-size selectors remain available when results fit on one page; only page navigation is hidden.

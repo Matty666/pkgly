@@ -33,6 +33,8 @@
         :headers="headers"
         :items="tableItems"
         :loading="loading"
+        :items-per-page="-1"
+        hide-default-footer
         item-value="id"
         @click:row="handleRowClick"
         class="elevation-0 storage-table">

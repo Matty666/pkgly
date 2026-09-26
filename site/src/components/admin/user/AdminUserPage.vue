@@ -261,14 +261,10 @@ watch(newPassword, () => {
 });
 
 async function changePassword() {
-  console.log("Changing Password");
-
   if (!newPassword.value) {
     alerts.error("Password required", "Enter and confirm a password before saving.");
     return;
   }
-
-  console.log("Password is valid");
 
   try {
     await http.put(`/api/user-management/update/${props.user.id}/password`, {
@@ -276,7 +272,6 @@ async function changePassword() {
     });
     alerts.success("Password changed", "Password has been changed.");
     newPassword.value = undefined;
-    console.log("Password Changed");
   } catch (error) {
     const resolved = resolveUserOperationError(
       error,

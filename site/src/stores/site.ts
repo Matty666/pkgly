@@ -61,7 +61,6 @@ export const siteStore = defineStore(
         .get<SiteInfo>("/api/info")
         .then((response) => {
           siteInfo.value = response.data;
-          console.log("Site info: ", siteInfo.value);
           return response.data;
         })
         .catch((err) => {

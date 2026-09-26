@@ -1,25 +1,21 @@
 <template>
   <main>
-    <form
+    <nav aria-label="Breadcrumb" class="storage-crumbs">
+      <RouterLink to="/admin/storages">Storages</RouterLink>
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">{{ storage?.name ?? "Storage" }}</span>
+    </nav>
+    <div
       v-if="storage"
       id="storage">
       <TwoByFormBox>
-        <TextInput
-          v-model="storage.name"
-          required
-          disabled>
-          Name
-        </TextInput>
-        <TextInput
-          v-model="storage.storage_type"
-          disabled>
-          Storage Type
-        </TextInput>
+        <ReadOnlyField label="Name" :value="storage.name" />
+        <ReadOnlyField label="Storage Type" :value="storage.storage_type" />
       </TwoByFormBox>
       <component
         :is="storageComponent"
         v-model="storage.config.settings"></component>
-    </form>
+    </div>
 
     <section
       v-if="storage"
@@ -79,7 +75,7 @@
   </main>
 </template>
 <script setup lang="ts">
-import TextInput from "@/components/form/text/TextInput.vue";
+import ReadOnlyField from "@/components/form/ReadOnlyField.vue";
 import TwoByFormBox from "@/components/form/TwoByFormBox.vue";
 import { storageTypes, type StorageItem } from "@/components/nr/storage/storageTypes";
 import http from "@/http";
@@ -178,6 +174,20 @@ getStorage();
 <style scoped lang="scss">
 #storage {
   padding: 1rem;
+}
+
+.storage-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 1rem 0;
+  font-size: 0.875rem;
+  color: var(--nr-text-secondary);
+}
+
+.storage-crumbs [aria-current="page"] {
+  color: var(--nr-text-primary);
+  font-weight: 500;
 }
 
 .storage-danger-zone {

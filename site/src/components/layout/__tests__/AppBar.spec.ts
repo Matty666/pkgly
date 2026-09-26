@@ -1,8 +1,14 @@
 // ABOUTME: Verifies app-shell branding, navigation visibility, and active-state wiring.
 // ABOUTME: Uses component stubs to inspect route-aware navigation props.
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import AppBar from "@/components/layout/AppBar.vue";
+
+vi.mock("vue-router", () => ({
+  useRoute: () => ({
+    name: "home",
+  }),
+}));
 
 const VAppBarStub = {
   template: "<div class='v-app-bar'><slot /></div>",

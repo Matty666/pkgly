@@ -48,11 +48,6 @@ const emit = defineEmits<{
   (e: "change", newValue: boolean): void;
 }>();
 
-// Add logging for debugging
-watch(value, (newValue, oldValue) => {
-  console.log(`SwitchInput [${props.id}] value changed:`, { oldValue, newValue });
-});
-
 const wrapperRef = ref<HTMLElement | null>(null);
 
 function isInteractiveElement(target: Element): boolean {

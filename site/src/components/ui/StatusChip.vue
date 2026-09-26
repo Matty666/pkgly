@@ -1,12 +1,13 @@
-<!-- ABOUTME: Unified repository status badges (Secured/Unsecured + Active/Inactive). -->
-<!-- ABOUTME: Single styling source for status indicators across home, detail, and admin. -->
+<!-- ABOUTME: Shows repository access and activity status across repository views. -->
+<!-- ABOUTME: Combines authentication and visibility into a clear access badge. -->
 <template>
   <span class="status-chips" role="group" aria-label="Repository status">
     <span
       class="status-chip"
-      :class="secured ? 'status-chip--secured' : 'status-chip--neutral'"
+      :class="isRestricted ? 'status-chip--secured' : 'status-chip--neutral'"
+      :title="accessDescription"
       data-testid="status-secured">
-      {{ secured ? "Secured" : "Unsecured" }}
+      {{ isRestricted ? "Private" : "Public" }}
     </span>
     <span
       class="status-chip"
@@ -18,10 +19,26 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { computed } from "vue";
+
+const props = defineProps<{
   secured: boolean;
+  visibility?: string;
   active: boolean;
 }>();
+
+const isRestricted = computed(() => {
+  const visibility = props.visibility?.toLowerCase();
+  return props.secured || (visibility !== undefined && visibility !== "public");
+});
+const accessDescription = computed(() => {
+  if (props.secured) {
+    return "Authentication is required";
+  }
+  return isRestricted.value
+    ? "Access is restricted by repository visibility"
+    : "Public access allowed";
+});
 </script>
 
 <style scoped lang="scss">

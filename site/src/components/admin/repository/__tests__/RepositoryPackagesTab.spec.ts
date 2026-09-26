@@ -167,6 +167,33 @@ const vuetifyStubs = {
 };
 
 describe("RepositoryPackagesTab.vue", () => {
+  it("keeps the page-size selector available when packages fit on one page", async () => {
+    const httpGet = http.get as vi.Mock;
+    httpGet.mockResolvedValueOnce({
+      data: { total_packages: 200, items: [] },
+      headers: {},
+    });
+
+    const wrapper = mount(RepositoryPackagesTab, {
+      props: {
+        repositoryId: "1",
+        repositoryType: "npm",
+      },
+      global: {
+        stubs: vuetifyStubs,
+      },
+    });
+
+    await flushPromises();
+    expect(wrapper.getComponent(VSelectStub).exists()).toBe(true);
+
+    wrapper.getComponent(VSelectStub).vm.$emit("update:modelValue", 200);
+    await flushPromises();
+
+    expect(wrapper.vm.totalPages).toBe(1);
+    expect(wrapper.getComponent(VSelectStub).exists()).toBe(true);
+  });
+
   it("offers 500 and 1000 items per page", async () => {
     const wrapper = mount(RepositoryPackagesTab, {
       props: {
@@ -180,11 +207,8 @@ describe("RepositoryPackagesTab.vue", () => {
 
     await flushPromises();
 
-    const select = wrapper.getComponent(VSelectStub);
-    const items = select.props("items") as unknown as number[] | undefined;
-    expect(items).toBeDefined();
-    expect(items).toContain(500);
-    expect(items).toContain(1000);
+    expect((wrapper.vm as any).perPageOptions).toContain(500);
+    expect((wrapper.vm as any).perPageOptions).toContain(1000);
   });
 
   it("marks search field clearable and clears search term", async () => {

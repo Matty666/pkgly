@@ -945,26 +945,24 @@ function removeOidcProvider(id: string) {
         </SwitchInput>
 
         <div class="casbinEditors">
-          <label
-            class="textareaLabel"
-            for="casbin-model">
-            Casbin model
+          <section class="casbin-block">
+            <label class="casbin-block__title" for="casbin-model">Casbin model</label>
             <textarea
               id="casbin-model"
               v-model="oauthForm.casbin_model"
+              class="casbin-block__editor"
               :disabled="!oauthForm.enabled"
               rows="8" />
-          </label>
-          <label
-            class="textareaLabel"
-            for="casbin-policy">
-            Casbin policy
+          </section>
+          <section class="casbin-block">
+            <label class="casbin-block__title" for="casbin-policy">Casbin policy</label>
             <textarea
               id="casbin-policy"
               v-model="oauthForm.casbin_policy"
+              class="casbin-block__editor"
               :disabled="!oauthForm.enabled"
               rows="8" />
-          </label>
+          </section>
         </div>
 
         <div class="providerSection">
@@ -1218,31 +1216,34 @@ function removeOidcProvider(id: string) {
   gap: 1.25rem;
 }
 
-.textareaLabel {
+.casbin-block {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
 
-  textarea {
-    width: 100%;
-    min-height: 200px;
-    padding: 0.75rem;
-    border-radius: var(--nr-radius-md);
-    border: 1px solid var(--nr-input-border);
-    background: var(--nr-input-background);
-    color: var(--nr-text-primary);
-    font-family: inherit;
-    resize: vertical;
+.casbin-block__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
 
-    &:hover {
-      border-color: var(--nr-input-border-hover);
-    }
+.casbin-block__editor {
+  width: 100%;
+  min-height: 200px;
+  resize: vertical;
+  padding: 0.75rem;
+  border-radius: var(--nr-radius-md);
+  border: 1px solid var(--nr-border-color);
+  background: var(--nr-surface-variant);
+  color: var(--nr-text-primary);
+  font-family: var(--nr-font-family-mono);
+  font-size: 0.8125rem;
 
-    &:focus {
-      outline: none;
-      border: 1px solid var(--nr-input-border-hover);
-      box-shadow: var(--nr-focus-ring);
-    }
+  &:focus-visible {
+    outline: none;
+    border-color: var(--nr-input-border-hover);
+    box-shadow: var(--nr-focus-ring);
   }
 }
 

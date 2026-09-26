@@ -49,21 +49,14 @@ if (import.meta.env.MODE === "development") {
     const foundRoute = routesJson.find((r) => r.path === route.path && (route.name = r.name));
     if (!foundRoute) {
       console.error(`route not found: ${route.path} update routes.json`);
-    } else {
-      console.log(`route found: ${route.path}`);
     }
   }
-  console.log("");
-  console.log(JSON.stringify(routes));
 }
-console.log(`apiURL: ${apiURL}`);
 async function init() {
   const info = await site.getInfo();
   if (info == undefined) {
-    console.log("info is undefined");
     return;
   }
-  console.log(info);
 
   if (!info?.is_installed) {
     router.push("/admin/install");
@@ -72,7 +65,6 @@ async function init() {
   const session = sessionStore();
   const user = await session.updateUser();
   if (user == undefined) {
-    console.log("user is undefined");
     return;
   }
 }

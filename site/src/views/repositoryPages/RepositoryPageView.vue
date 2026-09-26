@@ -17,6 +17,7 @@
               <span>{{ repositoryKindLabel }}</span>
               <StatusChip
                 :secured="repository.auth_enabled === true"
+                :visibility="repository.visibility"
                 :active="repository.active !== false" />
             </div>
           </div>

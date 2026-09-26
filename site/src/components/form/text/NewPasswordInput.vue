@@ -1,3 +1,5 @@
+<!-- ABOUTME: Collects a password and confirmation with configurable validation rules. -->
+<!-- ABOUTME: Publishes valid matching passwords while preserving invalid input for correction. -->
 <template>
   <section class="password-section">
     <v-text-field
@@ -103,6 +105,9 @@ const value = defineModel<string | undefined>({
 watch(
   value,
   (newValue) => {
+    if (newValue === undefined && (!isValid.value || !passwordsMatch.value)) {
+      return;
+    }
     internalValue.value = {
       value: newValue || "",
       confirmValue: newValue || "",
@@ -123,7 +128,6 @@ watch(
     } else {
       passwordsMatch.value = true;
     }
-    console.log(validations.value);
     const { isValid: newIsValid, validationResults: newValidationResults } = await checkValidations(
       validations.value,
       internalValue.value.value,
@@ -131,14 +135,12 @@ watch(
     validationResults.value = newValidationResults;
     isValid.value = newIsValid;
 
-    if (value.value === newValue.value) {
+    if (value.value === newValue.value && newIsValid && passwordsMatch.value) {
       return;
     }
     if (newIsValid && passwordsMatch.value) {
-      console.log("Setting value");
       value.value = newValue.value;
     } else {
-      console.log("Setting value to undefined");
       value.value = undefined;
     }
   },

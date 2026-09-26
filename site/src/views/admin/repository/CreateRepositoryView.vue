@@ -1,7 +1,8 @@
 <template>
-  <v-container class="py-6">
+  <v-container class="py-6" data-testid="repository-create-container">
     <v-alert
       v-if="errorBanner.visible"
+      data-testid="repository-create-alert"
       type="error"
       variant="tonal"
       class="mb-4"
@@ -24,7 +25,7 @@
       </v-card-title>
 
       <v-card-text>
-        <v-form @submit.prevent="createRepository()">
+        <v-form data-testid="repository-create-form" @submit.prevent="createRepository()">
           <v-row dense>
             <v-col cols="12" md="6">
               <TextInput
@@ -32,7 +33,8 @@
                 v-model="input.name"
                 autocomplete="off"
                 required
-                placeholder="Repository Name">
+                label="Repository Name"
+                placeholder="e.g. npm-hosted">
                 Repository Name
               </TextInput>
             </v-col>

@@ -4,18 +4,41 @@ import { describe, expect, it } from "vitest";
 import StatusChip from "@/components/ui/StatusChip.vue";
 
 describe("StatusChip", () => {
-  it("renders Secured + Active labels when both are true", () => {
+  it("renders Private + Active labels when both are true", () => {
     const wrapper = mount(StatusChip, { props: { secured: true, active: true } });
 
-    expect(wrapper.text()).toContain("Secured");
+    expect(wrapper.text()).toContain("Private");
     expect(wrapper.text()).toContain("Active");
   });
 
-  it("renders Unsecured + Inactive labels when both are false", () => {
+  it("renders Public + Inactive labels when both are false", () => {
     const wrapper = mount(StatusChip, { props: { secured: false, active: false } });
 
-    expect(wrapper.text()).toContain("Unsecured");
+    expect(wrapper.text()).toContain("Public");
     expect(wrapper.text()).toContain("Inactive");
+  });
+
+  it("explains the access badge with a tooltip", () => {
+    const on = mount(StatusChip, { props: { secured: true, active: true } });
+    expect(on.get('[data-testid="status-secured"]').attributes("title")).toContain(
+      "Authentication is required",
+    );
+
+    const off = mount(StatusChip, { props: { secured: false, active: true } });
+    expect(off.get('[data-testid="status-secured"]').attributes("title")).toContain(
+      "Public access allowed",
+    );
+  });
+
+  it("does not describe a visibility-restricted repository as public", () => {
+    const wrapper = mount(StatusChip, {
+      props: { secured: false, visibility: "Private", active: true },
+    });
+
+    expect(wrapper.get('[data-testid="status-secured"]').text()).toBe("Private");
+    expect(wrapper.get('[data-testid="status-secured"]').attributes("title")).toContain(
+      "restricted",
+    );
   });
 
   it("applies the secured tonal variant only when secured", () => {

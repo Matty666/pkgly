@@ -897,11 +897,11 @@ watch(
 }
 
 .packages__indexing-warning {
-  border-left: 4px solid var(--nr-primary-color);
+  border-left: 4px solid var(--nr-primary-dark);
   padding: 0.5rem 0.75rem;
   border-radius: 4px;
-  background: rgba(76, 110, 245, 0.12);
-  color: var(--nr-primary-color);
+  background: var(--nr-primary-07);
+  color: var(--nr-primary-dark);
   margin-bottom: 0.75rem;
   font-size: 0.9rem;
 }

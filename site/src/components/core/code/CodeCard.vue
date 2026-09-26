@@ -28,7 +28,6 @@ const props = defineProps({
     type: Object as () => CodeSnippet,
   },
 });
-console.log(props.code);
 const highlight = computed((): string => {
   return hljs.highlight(props.code.code, {
     language: props.code.language,

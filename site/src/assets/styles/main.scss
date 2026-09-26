@@ -1,3 +1,5 @@
+/* ABOUTME: Defines the application's base styles and global component overrides. */
+/* ABOUTME: Uses shared design tokens for readable text, links, and disabled actions. */
 /* Import new design tokens */
 @use "tokens" as *;
 
@@ -56,4 +58,12 @@ a {
 .v-menu a:hover,
 .v-app-bar a:hover {
   text-decoration: none !important;
+}
+
+/* Keep disabled primary actions readable with full opacity and a tonal fill. */
+.v-btn--variant-flat.v-btn--disabled.bg-primary,
+.v-btn--variant-elevated.v-btn--disabled.bg-primary {
+  opacity: 1 !important;
+  background: var(--nr-primary-32) !important;
+  color: var(--nr-primary-dark) !important;
 }

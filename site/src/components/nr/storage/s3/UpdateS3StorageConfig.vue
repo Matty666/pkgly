@@ -1,121 +1,46 @@
 <template>
   <section class="s3-config">
     <TwoByFormBox>
-      <TextInput
-        id="s3-bucket-name-display"
-        v-model="model.bucket_name"
-        disabled>
-        Bucket Name
-      </TextInput>
-      <TextInput
-        id="s3-region-display"
-        v-model="regionDisplay"
-        disabled>
-        Region / Endpoint Mode
-      </TextInput>
+      <ReadOnlyField label="Bucket Name" :value="model.bucket_name" />
+      <ReadOnlyField label="Region / Endpoint Mode" :value="regionDisplay" />
     </TwoByFormBox>
 
     <TwoByFormBox v-if="model.endpoint">
-      <TextInput
-        id="s3-endpoint-display"
-        v-model="endpointDisplay"
-        disabled>
-        Endpoint URL
-      </TextInput>
-      <TextInput
-        id="s3-custom-region-display"
-        v-model="customRegionDisplay"
-        disabled>
-        Custom Region Name
-      </TextInput>
+      <ReadOnlyField label="Endpoint URL" :value="endpointDisplay" />
+      <ReadOnlyField label="Custom Region Name" :value="customRegionDisplay" />
     </TwoByFormBox>
 
     <TwoByFormBox>
-      <TextInput
-        id="s3-access-key-display"
-        v-model="model.credentials.access_key"
-        disabled>
-        Access Key
-      </TextInput>
-      <TextInput
-        id="s3-secret-key-display"
-        :model-value="maskedSecret"
-        type="password"
-        disabled>
-        Secret Key
-      </TextInput>
+      <ReadOnlyField label="Access Key" :value="model.credentials.access_key" />
+      <ReadOnlyField label="Secret Key" :value="maskedSecret" />
     </TwoByFormBox>
 
-    <TextInput
-      id="s3-session-token-display"
-      :model-value="maskedSession"
-      type="password"
-      disabled>
-      Session Token
-    </TextInput>
+    <ReadOnlyField label="Session Token" :value="maskedSession" />
 
     <TwoByFormBox>
-      <TextInput
-        id="s3-role-arn-display"
-        v-model="model.credentials.role_arn"
-        disabled>
-        Role ARN
-      </TextInput>
-      <TextInput
-        id="s3-role-session-display"
-        v-model="model.credentials.role_session_name"
-        disabled>
-        Role Session Name
-      </TextInput>
+      <ReadOnlyField label="Role ARN" :value="model.credentials.role_arn" />
+      <ReadOnlyField label="Role Session Name" :value="model.credentials.role_session_name" />
     </TwoByFormBox>
 
-    <TextInput
-      id="s3-external-id-display"
-      v-model="model.credentials.external_id"
-      disabled>
-      External ID
-    </TextInput>
+    <ReadOnlyField label="External ID" :value="model.credentials.external_id" />
 
-    <TextInput
-      id="s3-path-style-display"
-      :model-value="model.path_style ? 'Path-style' : 'Virtual-hosted'"
-      disabled>
-      Addressing Mode
-    </TextInput>
+    <ReadOnlyField label="Addressing Mode" :value="model.path_style ? 'Path-style' : 'Virtual-hosted'" />
 
-    <TextInput
-      id="s3-cache-enabled-display"
-      :model-value="model.cache.enabled ? 'Enabled' : 'Disabled'"
-      disabled>
-      Disk Cache
-    </TextInput>
+    <ReadOnlyField label="Disk Cache" :value="model.cache.enabled ? 'Enabled' : 'Disabled'" />
 
     <TwoByFormBox v-if="model.cache.enabled">
-      <TextInput
-        id="s3-cache-path-display"
-        v-model="model.cache.path"
-        disabled>
-        Cache Directory
-      </TextInput>
-      <TextInput
-        id="s3-cache-max-bytes-display"
-        :model-value="formattedMaxSize"
-        disabled>
-        Max Size
-      </TextInput>
+      <ReadOnlyField label="Cache Directory" :value="model.cache.path" />
+      <ReadOnlyField label="Max Size" :value="formattedMaxSize" />
     </TwoByFormBox>
-    <TextInput
+    <ReadOnlyField
       v-if="model.cache.enabled"
-      id="s3-cache-max-entries-display"
-      :model-value="String(model.cache.max_entries)"
-      disabled>
-      Max Cached Entries
-    </TextInput>
+      label="Max Cached Entries"
+      :value="String(model.cache.max_entries)" />
   </section>
 </template>
 
 <script setup lang="ts">
-import TextInput from "@/components/form/text/TextInput.vue";
+import ReadOnlyField from "@/components/form/ReadOnlyField.vue";
 import TwoByFormBox from "@/components/form/TwoByFormBox.vue";
 import { computed } from "vue";
 import type { S3StorageSettings } from "@/components/nr/storage/storageTypes";

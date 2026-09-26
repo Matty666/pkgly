@@ -5,6 +5,10 @@
       data-testid="install-form"
       @submit.prevent="install">
       <h1 class="install-form__title">Install Pkgly</h1>
+      <p class="install-form__intro">
+        Create the first administrator account. You will use it to sign in and manage storages,
+        repositories, and users.
+      </p>
 
       <div
         class="install-form__field"
@@ -14,7 +18,8 @@
           v-model="input.username"
           autocomplete="username"
           required
-          placeholder="admin"
+          label="Username"
+          placeholder="e.g. admin"
           >Username</TextInput
         >
       </div>
@@ -22,18 +27,17 @@
       <div
         class="install-form__field"
         data-testid="install-field">
-        <PasswordInput
+        <NewPasswordInput
           id="password"
-          v-model="input.password"
-          required
-          :newPassword="true"
-          >Password</PasswordInput
+          v-model="password"
+          :passwordRules="passwordRules"
+          >Password</NewPasswordInput
         >
       </div>
 
       <SubmitButton
         class="install-form__submit"
-        :disabled="installing || formValid !== ''"
+        :disabled="installing || !canSubmit"
         :title="installButtonTitle()">
         Install
       </SubmitButton>
@@ -42,42 +46,35 @@
 </template>
 <script setup lang="ts">
 import SubmitButton from "@/components/form/SubmitButton.vue";
-import PasswordInput from "@/components/form/text/PasswordInput.vue";
+import NewPasswordInput from "@/components/form/text/NewPasswordInput.vue";
 import TextInput from "@/components/form/text/TextInput.vue";
 import http from "@/http";
 import router from "@/router";
 import { siteStore } from "@/stores/site";
 import { useAlertsStore } from "@/stores/alerts";
-import { computed, ref } from "vue";
+import { computed, ref, type Ref } from "vue";
 const input = ref({
   username: "",
-  password: "",
 });
+const password: Ref<string | undefined> = ref(undefined);
 const installing = ref(false);
 const site = siteStore();
 const alerts = useAlertsStore();
+const passwordRules = computed(() => site.getPasswordRulesOrDefault());
+const canSubmit = computed(() => input.value.username.trim() !== "" && !!password.value);
 function installButtonTitle() {
   if (installing.value) {
     return "Installing...";
   }
-  return formValid.value === "" ? "Install" : formValid.value;
+  return canSubmit.value ? "Install" : "Enter a username and a valid password.";
 }
-const formValid = computed(() => {
-  if (input.value.username === "") {
-    return "Username is required.";
-  }
-  if (input.value.password === "") {
-    return "Password is required.";
-  }
-  return "";
-});
 async function install() {
-  if (installing.value || formValid.value !== "") {
+  if (installing.value || !canSubmit.value) {
     return;
   }
   const newUser = {
-    username: input.value.username,
-    password: input.value.password,
+    username: input.value.username.trim(),
+    password: password.value,
   };
   const install = {
     user: newUser,
@@ -130,6 +127,13 @@ async function install() {
   font-weight: 600;
   text-align: center;
   color: var(--nr-text-color, #0f172a);
+}
+
+.install-form__intro {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--nr-text-secondary, rgba(0, 0, 0, 0.6));
+  text-align: center;
 }
 
 .install-form__field {

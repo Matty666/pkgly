@@ -99,6 +99,7 @@
               <div class="repository-card__statuses">
                 <StatusChip
                   :secured="repo.auth_enabled === true"
+                  :visibility="repo.visibility"
                   :active="repo.active !== false" />
               </div>
             </div>
@@ -126,7 +127,9 @@
         <EmptyState
           icon="mdi-package-variant"
           title="No repositories available"
-          message="Contact your administrator to create repositories.">
+          :message="isAdmin
+            ? 'Create your first repository to start publishing packages.'
+            : 'No repositories have been published yet. Contact your administrator to create one.'">
           <template v-if="isAdmin" #action>
             <v-btn
               color="primary"

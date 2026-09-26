@@ -16,9 +16,7 @@
 
         <v-row v-else dense>
           <v-col cols="12" md="6">
-            <TextInput id="docker-type-readonly" v-model="selectedType" disabled>
-              Repository Type
-            </TextInput>
+            <ReadOnlyField label="Repository Type" :value="selectedType" />
           </v-col>
         </v-row>
 
@@ -59,6 +57,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import DropDown from "@/components/form/dropdown/DropDown.vue";
+import ReadOnlyField from "@/components/form/ReadOnlyField.vue";
 import SubmitButton from "@/components/form/SubmitButton.vue";
 import TextInput from "@/components/form/text/TextInput.vue";
 import http from "@/http";

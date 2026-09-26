@@ -2,15 +2,21 @@
   <v-container
     v-if="repository"
     class="repository-view pa-0">
+    <nav aria-label="Breadcrumb" class="repository-view__crumbs">
+      <RouterLink :to="{ name: 'RepositoriesList' }">Repositories</RouterLink>
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">{{ repository.storage_name }}/{{ repository.name }}</span>
+    </nav>
     <v-card
       variant="flat"
       class="repository-view__card">
       <v-tabs
         v-model="activeTab"
         density="comfortable"
+        show-arrows
         class="repository-view__tabs"
         data-testid="repository-tabs">
-        <v-tab value="main">Main</v-tab>
+        <v-tab value="overview">Overview</v-tab>
         <v-tab value="storage">Storage</v-tab>
         <v-tab
           v-if="showPackagesTab"
@@ -30,7 +36,7 @@
       <v-window
         v-model="activeTab"
           class="py-4">
-        <v-window-item value="main">
+        <v-window-item value="overview">
           <BasicRepositoryInfo
             :repository="repository"
             embedded />
@@ -89,7 +95,7 @@ const repository = ref<RepositoryWithStorageName | undefined>(undefined);
 const configDescriptions = ref<Map<string, ConfigDescription>>(new Map());
 const configTypes = ref<string[]>([]);
 const repositoryKind = ref<string | null>(null);
-const activeTab = ref("main");
+const activeTab = ref("overview");
 
 const showPackagesTab = computed(() => {
   return supportsRepositoryPackageView(repository.value?.repository_type);
@@ -133,7 +139,7 @@ const configComponents = computed(() => {
 });
 
 const availableTabs = computed(() => {
-  const tabs = ["main"];
+  const tabs = ["overview"];
   tabs.push("storage");
   if (showPackagesTab.value) {
     tabs.push("packages");
@@ -146,11 +152,11 @@ watch(
   availableTabs,
   (tabs) => {
     if (tabs.length === 0) {
-      activeTab.value = "main";
+      activeTab.value = "overview";
       return;
     }
   if (!tabs.includes(activeTab.value)) {
-    activeTab.value = tabs[0] ?? "main";
+    activeTab.value = tabs[0] ?? "overview";
   }
   },
   { immediate: true },
@@ -214,6 +220,23 @@ getRepository();
 
 <style scoped lang="scss">
 @use "@/assets/styles/theme.scss" as *;
+
+.repository-view__crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 0.25rem;
+  font-size: 0.875rem;
+  color: var(--nr-text-secondary);
+}
+
+.repository-view__crumbs [aria-current="page"] {
+  color: var(--nr-text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .repository-view__card {
   border: 1px solid var(--nr-card-border);

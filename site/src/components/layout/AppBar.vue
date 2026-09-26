@@ -50,9 +50,9 @@
         </v-menu>
       </div>
 
-      <!-- Login button for guests -->
+      <!-- Login button for guests, hidden before first install -->
       <v-btn
-        v-else
+        v-else-if="!isInstallRoute"
         :to="{ name: 'login' }"
         color="primary"
         variant="flat"
@@ -66,6 +66,8 @@
 
 <script setup lang="ts">
 import type { PropType } from 'vue';
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
 import type { UserResponseType } from '@/types/base';
 import BrandMark from '@/components/layout/BrandMark.vue';
 
@@ -75,6 +77,9 @@ defineProps({
     required: false,
   },
 });
+
+const route = useRoute();
+const isInstallRoute = computed(() => route.name === "AdminInstall");
 </script>
 
 <style lang="scss" scoped>

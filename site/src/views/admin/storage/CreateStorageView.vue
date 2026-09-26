@@ -5,7 +5,7 @@
       :title="errorBanner.title"
       :message="errorBanner.message"
       @close="resetError" />
-    <h1>Storage Create</h1>
+    <h1>Create Storage</h1>
     <form @submit.prevent="createStorage()">
       <TwoByFormBox>
         <TextInput
@@ -13,7 +13,8 @@
           v-model="input.name"
           autocomplete="none"
           required
-          placeholder="Storage Name"
+          label="Storage Name"
+          placeholder="e.g. primary"
           >Storage Name</TextInput
         >
         <DropDown
@@ -29,6 +30,7 @@
         v-if="storageConfig"
         class="storageConfig">
         <h2>{{ storageConfig.title }}</h2>
+        <p class="storageConfig__hint">{{ storageConfig.description }}</p>
         <component
           :is="storageConfig.component"
           v-model="input.storageConfigValue"></component>
@@ -233,6 +235,12 @@ form {
   padding: 1rem;
   border: 1px solid var(--nr-border-color);
   border-radius: 0.5rem;
+}
+
+.storageConfig__hint {
+  margin: 0.25rem 0 1rem;
+  font-size: 0.875rem;
+  color: var(--nr-text-secondary);
 }
 @media screen and (max-width: 1200px) {
   form {

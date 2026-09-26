@@ -1,15 +1,14 @@
-<!-- ABOUTME: Renders a repository ecosystem icon linked to its external homepage. -->
-<!-- ABOUTME: Keeps external icon links labeled and isolated from the current page. -->
+<!-- ABOUTME: Renders a repository ecosystem icon without external navigation. -->
+<!-- ABOUTME: Keeps brand marks decorative so setup links stay local. -->
 <template>
-  <a
-    target="_blank"
-    rel="noopener noreferrer"
+  <span
     :title="icon.name"
-    :href="icon.url">
+    role="img"
+    :aria-label="`${icon.name} repository`">
     <component
       :is="icon.component"
       v-bind="icon.props"
-  /></a>
+  /></span>
 </template>
 <script setup lang="ts">
 import type { RepositoryIconDef } from "@/types/repository";
@@ -23,7 +22,7 @@ defineProps({
 </script>
 
 <style lang="scss" scoped>
-a {
+span {
   display: inline-block;
   margin: 0.5rem;
 }

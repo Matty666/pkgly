@@ -3,6 +3,9 @@
 import { config, flushPromises, mount } from "@vue/test-utils";
 import { defineComponent, h, nextTick } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { VIcon } from "vuetify/components/VIcon";
+
+config.global.components = { ...config.global.components, VIcon };
 
 const routerPush = vi.fn();
 
@@ -730,7 +733,7 @@ describe("RepositoryPackagesPublic.vue", () => {
     expect(wrapper.get('[data-testid="package-row"]').text()).toContain("Not available");
   });
 
-  it("hides page navigation when all packages fit on one page", async () => {
+  it("keeps the page-size selector available when packages fit on one page", async () => {
     (http.get as vi.Mock).mockResolvedValue(
       createPackages([
         {
@@ -757,6 +760,7 @@ describe("RepositoryPackagesPublic.vue", () => {
     expect(wrapper.text()).not.toContain("Previous");
     expect(wrapper.text()).not.toContain("Next");
     expect(wrapper.text()).not.toContain("Page 1 of 1");
+    expect(wrapper.find(".packages__pager").exists()).toBe(true);
     expect(wrapper.find('[data-stub="v-select"]').exists()).toBe(true);
   });
 });

@@ -64,15 +64,16 @@ function copyURL() {
 
 code {
   min-width: 0;
-  overflow: hidden;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-all;
   padding: var(--nr-spacing-sm) var(--nr-spacing-md);
   border: 1px solid var(--nr-border-color);
   border-right: 0;
   border-radius: var(--nr-radius-md) 0 0 var(--nr-radius-md);
   background: var(--nr-surface-variant);
   font-family: var(--nr-font-family-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 0.8125rem;
 }
 
 button {

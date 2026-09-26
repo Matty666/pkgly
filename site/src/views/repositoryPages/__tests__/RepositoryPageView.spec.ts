@@ -156,7 +156,7 @@ describe("RepositoryPageView.vue", () => {
     const metadata = wrapper.get('[data-testid="repository-metadata"]').text();
     expect(metadata).toContain("NPM");
     expect(metadata).toContain("Hosted");
-    expect(metadata).toContain("Unsecured");
+    expect(metadata).toContain("Public");
     expect(metadata).toContain("Active");
     expect(wrapper.find('[data-testid="copy-url"]').exists()).toBe(false);
 

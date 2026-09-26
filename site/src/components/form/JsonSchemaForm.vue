@@ -1,6 +1,6 @@
 <template>
   <div>
-    <form>
+    <div class="jsf-fields">
       <div
         v-for="input in inputs"
         :key="input.id">
@@ -11,7 +11,7 @@
           :model-value="value[input.id]"
           @update:model-value="updateValue(input.id, $event)" />
       </div>
-    </form>
+    </div>
   </div>
 </template>
 
@@ -80,7 +80,6 @@ function formFieldToInput(field: FormInputType): Input | undefined {
           value: value.value,
         };
       });
-      console.log(options);
       return {
         component: DropDown,
         label: enumField.title() ?? enumField.key(),
@@ -108,7 +107,7 @@ function formFieldToInput(field: FormInputType): Input | undefined {
 }
 </script>
 <style scoped lang="scss">
-form {
+.jsf-fields {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;

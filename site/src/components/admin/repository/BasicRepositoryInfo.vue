@@ -28,7 +28,18 @@
             class="meta-tile"
             data-testid="repository-meta-item">
             <span class="meta-tile__label">{{ item.label }}</span>
-            <span class="meta-tile__value">{{ item.value }}</span>
+            <span class="meta-tile__value">
+              <span>{{ item.value }}</span>
+              <button
+                v-if="item.copyable"
+                type="button"
+                class="meta-tile__copy"
+                :aria-label="`Copy ${item.label}`"
+                :title="`Copy ${item.label}`"
+                @click="copyValue(item.value)">
+                <v-icon size="x-small" aria-hidden="true">mdi-content-copy</v-icon>
+              </button>
+            </span>
           </div>
         </v-col>
       </v-row>
@@ -97,6 +108,7 @@
 import http from "@/http";
 import router from "@/router";
 import type { RepositoryWithStorageName } from "@/types/repository";
+import { formatRelativeUpdatedAt } from "@/utils/relativeTime";
 import { useAlertsStore } from "@/stores/alerts";
 import { computed, ref, type PropType } from "vue";
 
@@ -136,6 +148,7 @@ const metaItems = computed(() => {
     {
       label: "Storage Identifier",
       value: props.repository.storage_id,
+      copyable: true,
     },
     {
       label: "Storage Usage",
@@ -162,18 +175,19 @@ function formatBytes(bytes?: number | null): string {
 }
 
 function formatUpdatedAt(timestamp?: string | null): string {
-  if (!timestamp) {
-    return "Unknown";
-  }
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) {
-    return "Unknown";
-  }
-  return date.toLocaleString();
+  return formatRelativeUpdatedAt(timestamp);
 }
 const alerts = useAlertsStore();
 const isDeleteDialogOpen = ref(false);
 const isDeleting = ref(false);
+
+function copyValue(value: string) {
+  if (!value) {
+    return;
+  }
+  navigator.clipboard.writeText(value);
+  alerts.success("Copied");
+}
 
 function openDeleteDialog() {
   isDeleteDialogOpen.value = true;
@@ -269,6 +283,29 @@ async function confirmDelete() {
     font-size: 1rem;
     color: $text;
     word-break: break-word;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+}
+
+.meta-tile__copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--nr-border-color);
+  border-radius: var(--nr-radius-md);
+  background: var(--nr-background);
+  color: var(--nr-text-secondary);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--nr-primary);
+    border-color: var(--nr-primary);
   }
 }
 

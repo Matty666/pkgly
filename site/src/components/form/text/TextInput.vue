@@ -3,6 +3,7 @@
     :id="id"
     :type="type"
     :label="label"
+    :placeholder="placeholder"
     :error-messages="error"
     :clearable="haveClearButton"
     v-model="value"
@@ -15,8 +16,6 @@
   </v-text-field>
 </template>
 <script setup lang="ts">
-import { computed } from 'vue';
-
 const props = defineProps({
   id: String,
   haveClearButton: {
@@ -32,6 +31,10 @@ const props = defineProps({
     default: "text",
   },
   label: {
+    type: String,
+    required: false,
+  },
+  placeholder: {
     type: String,
     required: false,
   },

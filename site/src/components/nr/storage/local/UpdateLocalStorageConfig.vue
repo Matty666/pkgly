@@ -1,19 +1,12 @@
 <template>
   <div>
-    <TextInput
-      v-model="model.path"
-      required
-      autocomplete="none"
-      spellcheck="false"
-      disabled>
-      Path
-    </TextInput>
+    <ReadOnlyField label="Path" :value="model.path" />
   </div>
 </template>
 
 <script setup lang="ts">
-import TextInput from "@/components/form/text/TextInput.vue";
+import ReadOnlyField from "@/components/form/ReadOnlyField.vue";
 
 const model = defineModel<any>();
-console.log(model);
+
 </script>

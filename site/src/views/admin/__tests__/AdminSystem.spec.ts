@@ -1,3 +1,5 @@
+// ABOUTME: Verifies administrator single sign-on settings load and save correctly.
+// ABOUTME: Covers edited OAuth2 payloads, including Casbin access rules.
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
@@ -150,7 +152,10 @@ describe("AdminSystem.vue", () => {
             auto_create_users: false,
             google: null,
             microsoft: null,
-            casbin: null,
+            casbin: {
+              model: "[request_definition]\nr = sub, obj, act",
+              policy: "p = sub, obj, act",
+            },
             group_role_mappings: [],
             available_roles: [],
           },
@@ -176,5 +181,29 @@ describe("AdminSystem.vue", () => {
     expect(httpGet).toHaveBeenCalledWith("/api/security/sso");
     expect(httpGet).toHaveBeenCalledWith("/api/security/oauth2");
     expect(httpGet).not.toHaveBeenCalledWith("/api/system/webhooks");
+  });
+
+  it("saves edited Casbin model and policy values", async () => {
+    httpPut.mockResolvedValue({});
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, {
+      global: {
+        stubs,
+      },
+    });
+
+    await flushPromises();
+    await wrapper.get("#oauth-enabled").setValue(true);
+    await wrapper.get("#casbin-model").setValue("model-v2");
+    await wrapper.get("#casbin-policy").setValue("policy-v2");
+    await wrapper.get("form.oauthForm").trigger("submit");
+    await flushPromises();
+
+    expect(httpPut).toHaveBeenCalledWith(
+      "/api/security/oauth2",
+      expect.objectContaining({
+        casbin: { model: "model-v2", policy: "policy-v2" },
+      }),
+    );
   });
 });

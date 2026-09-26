@@ -8,6 +8,7 @@
 <script setup lang="ts">
 import type { RepositoryWithStorageName } from "@/types/repository";
 import { computed, type PropType } from "vue";
+import DockerRepositoryHelper from "./types/docker/DockerRepositoryHelper.vue";
 import MavenRepositoryHelper from "./types/maven/MavenRepositoryHelper.vue";
 import PythonRepositoryHelper from "./types/python/PythonRepositoryHelper.vue";
 import PhpRepositoryHelper from "./types/php/PhpRepositoryHelper.vue";
@@ -20,6 +21,10 @@ const props = defineProps({
   },
 });
 const helpers = [
+  {
+    type: "docker",
+    component: DockerRepositoryHelper,
+  },
   {
     type: "maven",
     component: MavenRepositoryHelper,

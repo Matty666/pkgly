@@ -28,7 +28,7 @@
             @click="refreshUsage" />
         </div>
         <v-btn
-          v-if="repositories.length >= 1 && hasStorages"
+          v-if="hasStorages"
           color="primary"
           prepend-icon="mdi-plus"
           :to="{ name: 'RepositoryCreate' }"
@@ -58,6 +58,8 @@
             :headers="headers"
             :items="tableItems"
             :loading="refreshing"
+            :items-per-page="-1"
+            hide-default-footer
             item-value="id"
             @click:row="handleRowClick"
             class="elevation-0 repository-table">
@@ -74,6 +76,7 @@
               <div class="access-cell">
                 <StatusChip
                   :secured="item.auth_enabled === true"
+                  :visibility="item.visibility"
                   :active="item.active !== false" />
               </div>
             </template>
@@ -113,6 +116,7 @@
             {{ emptyStateMessage }}
           </div>
           <v-btn
+            data-testid="empty-state-action"
             color="primary"
             prepend-icon="mdi-plus"
             :to="{ name: emptyStateActionRoute }"
@@ -135,6 +139,7 @@ import type { StorageItem } from "@/components/nr/storage/storageTypes";
 import { useRepositoryStore } from "@/stores/repositories";
 import StatusChip from "@/components/ui/StatusChip.vue";
 import TableSkeleton from "@/components/ui/TableSkeleton.vue";
+import { formatRelativeUpdatedAt } from "@/utils/relativeTime";
 
 const router = useRouter();
 const repositoryStore = useRepositoryStore();
@@ -190,8 +195,10 @@ const tableItems = computed(() => {
       storage_name: repo.storage_name,
       repository_type: repo.repository_type,
       repository_kind,
+      visibility: repo.visibility,
       auth_enabled: repo.auth_enabled,
-      auth_label: repo.auth_enabled ? "Secured" : "Unsecured",
+      auth_label:
+        repo.auth_enabled || repo.visibility.toLowerCase() !== "public" ? "Private" : "Public",
       storage_usage_bytes: repo.storage_usage_bytes,
       active: repo.active,
       active_label: repo.active === false ? "Inactive" : "Active",
@@ -295,10 +302,7 @@ function formatUpdatedAt(timestamp?: string | null): string {
   if (!isValidTimestamp(timestamp)) {
     return "Not available";
   }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(timestamp));
+  return formatRelativeUpdatedAt(timestamp);
 }
 
 function isValidTimestamp(timestamp?: string | null): timestamp is string {
@@ -333,11 +337,7 @@ const usageStatusText = computed(() => {
   if (!latestUsageUpdate.value) {
     return "Not calculated yet.";
   }
-  const date = new Date(latestUsageUpdate.value);
-  if (Number.isNaN(date.getTime())) {
-    return "Not calculated yet.";
-  }
-  return `Last updated ${date.toLocaleString()}`;
+  return `Last updated ${formatRelativeUpdatedAt(latestUsageUpdate.value)}`;
 });
 
 void fetchInitialData();

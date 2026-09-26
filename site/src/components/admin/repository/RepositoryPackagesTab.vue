@@ -80,6 +80,7 @@
 
       <v-data-table-server
         v-if="!isLoading && !error && totalPackages > 0 && visiblePackages.length > 0"
+        data-testid="packages-table"
         :headers="headers"
         :items="tableItems"
         :loading="isDeleting"
@@ -169,6 +170,7 @@
         </div>
 
         <v-pagination
+          v-if="totalPages > 1"
           v-model="currentPage"
           :length="totalPages"
           :disabled="isDeleting"
@@ -662,9 +664,10 @@ function formatBytes(bytes: number): string {
 }
 
 .packages__indexing-alert {
-  border-left: 4px solid var(--v-theme-primary, #4c6ef5);
+  border-left: 4px solid var(--nr-primary-dark);
   padding: 0.5rem 0.75rem;
-  background: rgba(76, 110, 245, 0.08);
+  background: var(--nr-primary-07);
+  color: var(--nr-primary-dark);
   border-radius: 4px;
   font-size: 0.9rem;
 }

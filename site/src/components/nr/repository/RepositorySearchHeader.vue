@@ -28,6 +28,7 @@
         aria-controls="search-help-modal"
         title="Search syntax help">
         <v-icon aria-hidden="true">mdi-help-circle-outline</v-icon>
+        <span>Help</span>
         <span class="sr-only">Search syntax help</span>
       </button>
     </div>
@@ -265,23 +266,26 @@ onBeforeUnmount(() => {
 }
 
 .search-help-button {
-  width: 2.5rem;
-  height: 2.5rem;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0 0.75rem;
+  gap: 0.375rem;
   border-radius: var(--nr-radius-round);
   border: 1px solid var(--nr-border-color);
   background: var(--nr-background-primary);
-  color: var(--nr-accent);
+  color: var(--nr-primary-dark);
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  white-space: nowrap;
   transition: background-color var(--nr-transition-fast), color var(--nr-transition-fast);
 }
 
 .search-help-button:hover,
 .search-help-button:focus-visible {
-  background: var(--nr-accent);
-  color: var(--nr-background-primary);
+  background: var(--nr-primary-07);
+  color: var(--nr-primary-dark);
   box-shadow: var(--nr-focus-ring);
 }
 

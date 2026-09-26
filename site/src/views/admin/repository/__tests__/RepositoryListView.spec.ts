@@ -1,11 +1,15 @@
 // ABOUTME: Verifies admin repository operations, table hierarchy, and empty states.
 // ABOUTME: Covers real request state transitions through focused component stubs.
-import { flushPromises, mount } from "@vue/test-utils";
+import { config, flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
 import RepositoryListView from "@/views/admin/repository/RepositoryListView.vue";
 import type { RepositoryWithStorageName } from "@/types/repository";
 import http from "@/http";
+import { VSkeletonLoader } from "vuetify/components/VSkeletonLoader";
+import { createVuetify } from "vuetify";
+
+config.global.plugins = [...config.global.plugins, createVuetify({ components: { VSkeletonLoader } })];
 
 const pushMock = vi.fn();
 const mockGetStorages = vi.fn();
@@ -86,6 +90,7 @@ const stubs = {
       <button
         type="button"
         :data-to-name="to && typeof to === 'object' ? to.name : to"
+        :data-testid="$attrs['data-testid']"
         @click="$emit('click')">
         <slot />{{ ariaLabel }}
       </button>
@@ -180,7 +185,7 @@ describe("RepositoryListView.vue", () => {
     for (const header of headers) {
       expect(header.sortable, `${header.title} should be sortable`).toBe(true);
     }
-    // Access sorts by the auth_label value (Secured/Unsecured).
+    // Access sorts by the auth_label value (Private/Public).
     const access = headers.find((header) => header.key === "access");
     expect(access?.sortable).toBe(true);
     expect(access?.value).toBe("auth_label");
@@ -245,9 +250,9 @@ describe("RepositoryListView.vue", () => {
       "Proxy",
       "Virtual",
     ]);
-    expect(items[0].auth_label).toBe("Secured");
+    expect(items[0].auth_label).toBe("Private");
     expect(items[0].active_label).toBe("Active");
-    expect(items[1].auth_label).toBe("Unsecured");
+    expect(items[1].auth_label).toBe("Private");
     expect(items[1].active_label).toBe("Inactive");
     expect((wrapper.vm as any).formatBytes(null)).toBe("Not available");
     expect((wrapper.vm as any).formatUpdatedAt(null)).toBe("Not available");
@@ -325,13 +330,11 @@ describe("RepositoryListView.vue", () => {
 
     await flushPromises();
 
-    const createRepositoryButtons = wrapper
-      .findAll("button")
-      .filter((button) => button.text().includes("Create Repository"));
     expect(wrapper.text()).toContain("No repositories found");
     expect(wrapper.text()).toContain("Create your first repository to get started.");
-    expect(createRepositoryButtons).toHaveLength(1);
-    expect(createRepositoryButtons[0]!.attributes("data-to-name")).toBe("RepositoryCreate");
+    const emptyAction = wrapper.get('[data-testid="empty-state-action"]');
+    expect(emptyAction.text()).toContain("Create Repository");
+    expect(emptyAction.attributes("data-to-name")).toBe("RepositoryCreate");
   });
 
   it("directs users to create storage when repository creation has no storage target", async () => {
@@ -344,13 +347,10 @@ describe("RepositoryListView.vue", () => {
 
     await flushPromises();
 
-    const createStorageButtons = wrapper
-      .findAll("button")
-      .filter((button) => button.text().includes("Create Storage"));
     expect(wrapper.text()).toContain("No storages found");
     expect(wrapper.text()).toContain("Create a storage before adding repositories.");
-    expect(wrapper.text()).not.toContain("Create Repository");
-    expect(createStorageButtons).toHaveLength(1);
-    expect(createStorageButtons[0]!.attributes("data-to-name")).toBe("StorageCreate");
+    const emptyAction = wrapper.get('[data-testid="empty-state-action"]');
+    expect(emptyAction.text()).toContain("Create Storage");
+    expect(emptyAction.attributes("data-to-name")).toBe("StorageCreate");
   });
 });

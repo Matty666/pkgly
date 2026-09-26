@@ -7,14 +7,15 @@
       <v-spacer />
       <v-text-field
         v-model="searchValue"
-        placeholder="Search by Name, Username, Email"
+        placeholder="Search by name, username, email"
+        aria-label="Search by name, username, email"
         prepend-inner-icon="mdi-magnify"
         variant="outlined"
         density="compact"
         clearable
         @click:clear="clearSearch"
         hide-details
-        style="max-width: 300px;"
+        style="max-width: 360px;"
         autofocus />
     </v-card-title>
 
@@ -22,6 +23,8 @@
       :headers="headers"
       :items="tableItems"
       :search="searchValue"
+      :items-per-page="-1"
+      hide-default-footer
       item-value="id"
       @click:row="handleRowClick"
       class="elevation-0 user-table">

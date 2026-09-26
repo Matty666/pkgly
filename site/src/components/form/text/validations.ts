@@ -54,9 +54,6 @@ export async function checkValidations(
     console.debug(`Validation ${validation.id} is ${isValid}`);
     validationResults[validation.id] = isValid;
   }
-  // Time taken to validate
-  const timeToValidate = Date.now() - startTime;
-  console.log(`Time taken to validate: ${timeToValidate}ms`);
   return {
     isValid: isCompletelyValid,
     validationResults: validationResults,
