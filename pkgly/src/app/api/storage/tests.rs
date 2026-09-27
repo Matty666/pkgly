@@ -1,10 +1,10 @@
 // ABOUTME: Tests storage deletion permissions, cascading cleanup, and retry behavior.
-// ABOUTME: Exercises real PostgreSQL, filesystem, and MinIO storage backends.
+// ABOUTME: Exercises real PostgreSQL, filesystem, and RustFS storage backends.
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 use super::*;
 
-mod minio;
-use minio::TestMinio;
+mod rustfs;
+use rustfs::TestRustfs;
 
 use crate::repository::NewRepository;
 use crate::test_support::DB_TEST_LOCK;
@@ -540,12 +540,12 @@ async fn delete_storage_cascade_reports_partial_failure_and_can_retry() {
     let _guard = DB_TEST_LOCK.lock().await;
     let db = fresh_db().await;
     let docker = Cli::default();
-    let minio = TestMinio::start(&docker).await;
+    let rustfs = TestRustfs::start(&docker).await;
     let storage_root = tempfile::tempdir().expect("tempdir");
     let storage_id = NewDBStorage::new(
         "s3".into(),
         StorageName::new("primary".into()).expect("storage name"),
-        minio.config(),
+        rustfs.config(),
     )
     .insert(db.pool())
     .await
@@ -568,7 +568,7 @@ async fn delete_storage_cascade_reports_partial_failure_and_can_retry() {
             .await
             .expect("upload artifact");
     }
-    minio.deny_deletion(repo_b);
+    rustfs.deny_deletion(repo_b).await;
 
     let response = call_delete(&site, admin_auth(), storage_id, true)
         .await
@@ -597,7 +597,10 @@ async fn delete_storage_cascade_reports_partial_failure_and_can_retry() {
     );
 
     // Cleanup ran for the first repository before the failure.
-    assert_eq!(minio.objects(), vec![format!("{repo_b}/artifact.jar")]);
+    assert_eq!(
+        rustfs.objects().await,
+        vec![format!("{repo_b}/artifact.jar")]
+    );
 
     // Database records and runtime registrations are retained for retry.
     assert!(
@@ -623,100 +626,12 @@ async fn delete_storage_cascade_reports_partial_failure_and_can_retry() {
     assert!(site.get_repository(repo_b).is_some());
 
     // Fix the backend and retry.
-    minio.allow_deletion();
+    rustfs.allow_deletion().await;
     let retry = call_delete(&site, admin_auth(), storage_id, true)
         .await
         .expect("handler ok");
     assert_eq!(retry.status(), StatusCode::NO_CONTENT);
-    assert!(minio.objects().is_empty());
-    storage.unload().await.expect("unload S3 storage");
-    site.close().await;
-}
-
-#[tokio::test]
-async fn minio_deletion_fixture_is_removed_on_unwind() {
-    let docker = Cli::default();
-    let minio = TestMinio::start(&docker).await;
-    minio.deny_deletion(Uuid::new_v4());
-    let container_id = minio.id().to_string();
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-        let _fixture = minio;
-        // Resume unwinding without invoking the panic hook for this expected panic.
-        std::panic::resume_unwind(Box::new("exercise fixture cleanup"));
-    }));
-    assert!(result.is_err());
-
-    let output = std::process::Command::new("docker")
-        .args([
-            "ps",
-            "--all",
-            "--quiet",
-            "--filter",
-            &format!("id={container_id}"),
-        ])
-        .output()
-        .expect("inspect fixture cleanup");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.stderr.is_empty());
-    assert!(
-        output.stdout.is_empty(),
-        "MinIO must be removed during unwinding"
-    );
-}
-
-#[tokio::test]
-async fn minio_deletion_policy_only_blocks_the_selected_repository() {
-    let _guard = DB_TEST_LOCK.lock().await;
-    let db = fresh_db().await;
-    let docker = Cli::default();
-    let minio = TestMinio::start(&docker).await;
-    let storage_root = tempfile::tempdir().expect("tempdir");
-    let site = build_site(&db, storage_root.path()).await;
-    let factory = site.get_storage_factory("s3").expect("S3 factory");
-    let storage = factory
-        .create_storage(StorageConfig {
-            storage_config: StorageConfigInner::test_config(),
-            type_config: serde_json::from_value(minio.config()).expect("S3 config"),
-        })
-        .await
-        .expect("S3 storage");
-    let repo_a = Uuid::new_v4();
-    let repo_b = Uuid::new_v4();
-    let path = nr_core::storage::StoragePath::from("artifact.jar");
-    for repository in [repo_a, repo_b] {
-        storage
-            .save_file(
-                repository,
-                nr_storage::FileContent::from(b"artifact"),
-                &path,
-            )
-            .await
-            .expect("upload artifact");
-    }
-    minio.deny_deletion(repo_b);
-
-    storage
-        .delete_repository(repo_a)
-        .await
-        .expect("delete allowed repository");
-    let error = storage
-        .delete_repository(repo_b)
-        .await
-        .expect_err("denied repository deletion");
-    assert!(error.to_string().contains("AccessDenied"), "{error}");
-    assert_eq!(minio.objects(), vec![format!("{repo_b}/artifact.jar")]);
-
-    minio.allow_deletion();
-    storage
-        .delete_repository(repo_b)
-        .await
-        .expect("retry repository deletion");
-    assert!(minio.objects().is_empty());
+    assert!(rustfs.objects().await.is_empty());
     storage.unload().await.expect("unload S3 storage");
     site.close().await;
 }
