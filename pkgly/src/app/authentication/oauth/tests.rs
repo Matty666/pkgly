@@ -121,18 +121,30 @@ async fn generic_oidc_rejects_missing_nonce_and_removed_provider_before_exchange
     let auth = service
         .begin_authorization("company".parse().unwrap(), None, None)
         .unwrap();
-    let mut snapshot = service.export_state(&auth.state).unwrap();
-    snapshot.nonce = None;
-    assert!(matches!(
-        service
-            .exchange_code_with_export(
-                None,
-                AuthorizationCode::new("code".into()),
-                snapshot.clone()
-            )
-            .await,
-        Err(OAuth2ServiceError::InvalidState)
-    ));
+    let snapshot = service.export_state(&auth.state).unwrap();
+    for missing in [
+        "nonce",
+        "callback_uri",
+        "config_fingerprint",
+        "changed_callback",
+    ] {
+        let mut invalid = snapshot.clone();
+        match missing {
+            "nonce" => invalid.nonce = None,
+            "callback_uri" => invalid.callback_uri = None,
+            "config_fingerprint" => invalid.config_fingerprint = None,
+            _ => invalid.callback_uri = Some("https://other.example/callback".into()),
+        }
+        assert!(
+            matches!(
+                service
+                    .exchange_code_with_export(None, AuthorizationCode::new("code".into()), invalid)
+                    .await,
+                Err(OAuth2ServiceError::InvalidState)
+            ),
+            "{missing}"
+        );
+    }
     let removed = OAuth2Service::initialize(google_settings())
         .await
         .unwrap()

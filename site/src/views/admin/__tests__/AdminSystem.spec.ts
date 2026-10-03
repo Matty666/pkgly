@@ -195,6 +195,61 @@ describe("AdminSystem.vue", () => {
     );
   });
 
+  it("retains a loaded secret while editing, disabling, and removing a custom provider", async () => {
+    const originalGet = httpGet.getMockImplementation()!;
+    httpGet.mockImplementation(async (url: string) => {
+      const response = await originalGet(url);
+      if (url === "/api/security/oauth2") {
+        response.data.providers = [
+          {
+            id: "partner-login",
+            display_name: "Partner account",
+            enabled: true,
+            issuer: "https://partner.example/team",
+            client_id: "pkgly",
+            client_secret_configured: true,
+            scopes: ["openid", "profile", "email"],
+            token_endpoint_auth_method: "client_secret_post",
+            id_token_signing_alg: "RS256",
+          },
+        ];
+      }
+      return response;
+    });
+    httpPut.mockResolvedValue({});
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, { global: { stubs } });
+    await flushPromises();
+    expect(wrapper.get('[data-testid="generic-secret"] input').attributes("placeholder")).toContain(
+      "keep the current secret",
+    );
+    await wrapper.get('[data-testid="generic-name"] input').setValue("Updated label");
+    await wrapper.get('input[id^="generic-enabled-"]').setValue(false);
+    await wrapper.get("form.oauthForm").trigger("submit");
+    await flushPromises();
+    expect(httpPut).toHaveBeenLastCalledWith(
+      "/api/security/oauth2",
+      expect.objectContaining({
+        providers: [
+          expect.objectContaining({
+            id: "partner-login",
+            display_name: "Updated label",
+            enabled: false,
+            client_secret: null,
+          }),
+        ],
+      }),
+    );
+    const remove = wrapper.findAll("button").find((button) => button.text() === "Remove provider")!;
+    await remove.trigger("click");
+    await wrapper.get("form.oauthForm").trigger("submit");
+    await flushPromises();
+    expect(httpPut).toHaveBeenLastCalledWith(
+      "/api/security/oauth2",
+      expect.objectContaining({ providers: [] }),
+    );
+  });
+
   it("loads single sign on settings without fetching webhooks", async () => {
     const module = await import("@/views/admin/AdminSystem.vue");
     const wrapper = mount(module.default, {

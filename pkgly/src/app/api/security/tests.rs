@@ -713,6 +713,37 @@ fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
     )
     .unwrap();
     assert_eq!(merged.providers[0].client_secret, "secret");
+    update["providers"][0]["client_secret"] = serde_json::Value::Null;
+    assert_eq!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .unwrap()
+        .providers[0]
+            .client_secret,
+        "secret"
+    );
+    update["providers"][0]["client_secret"] = json!("replacement");
+    assert_eq!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .unwrap()
+        .providers[0]
+            .client_secret,
+        "replacement"
+    );
+    update["providers"][0]["client_secret"] = json!("");
+    assert!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .is_err()
+    );
+    update["providers"][0]["client_secret"] = serde_json::Value::Null;
     update["providers"][0]["id"] = "new-id".into();
     assert!(
         merge_oauth2_settings(
