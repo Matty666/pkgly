@@ -93,6 +93,27 @@ The username comes from `preferred_username`, then `email`, then `sub`.
 Pkgly normalizes that value before its username lookup. Missing or false email verification does not permit an email match.
 Inactive accounts cannot obtain sessions. Keep automatic creation disabled when mapping existing accounts.
 
+## Fork preview image
+
+The fork publishes a Linux AMD64 preview after the PR integration tests pass.
+Publication runs only for `feature/generic-oidc` from the `Matty666/pkgly` repository itself.
+External PR branches cannot publish this image. CI uses its built-in GitHub token with package write access.
+
+The image is the same `pkgly:test` image that passed the package integration tests.
+CI builds it from the exact PR head and records that commit in its image metadata.
+The image receives a full commit tag and a moving `generic-oidc` tag:
+
+```sh
+docker pull ghcr.io/matty666/pkgly:generic-oidc
+# For repeatable QA, replace <commit> with the full PR head SHA:
+docker pull ghcr.io/matty666/pkgly:<commit>
+```
+
+Use the digest from the publication log when recording deployment QA.
+The preview does not update the `latest` tag or create a release.
+A new package starts private. Authenticate to pull it, or make the package public in GitHub package settings.
+Image publication does not change your deployment or identity provider configuration.
+
 ## Environment example: Authelia
 
 Authelia is one possible configured provider. Pkgly contains no Authelia-specific product behavior.
