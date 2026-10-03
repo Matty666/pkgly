@@ -156,3 +156,18 @@ async fn generic_oidc_rejects_missing_nonce_and_removed_provider_before_exchange
         Err(OAuth2ServiceError::ProviderNotConfigured(_))
     ));
 }
+
+#[tokio::test]
+async fn generic_oidc_can_disable_the_last_custom_provider() {
+    let settings: OAuth2Settings = serde_json::from_value(serde_json::json!({
+        "enabled": true, "providers": [{"id":"company", "enabled":false}]
+    }))
+    .unwrap();
+    let service = OAuth2Service::initialize(settings).await.unwrap().unwrap();
+    assert!(service.provider_descriptors().is_empty());
+    assert!(
+        service
+            .begin_authorization("company".parse().unwrap(), None, None)
+            .is_err()
+    );
+}
