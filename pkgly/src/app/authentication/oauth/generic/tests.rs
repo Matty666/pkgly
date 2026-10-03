@@ -19,6 +19,8 @@ fn generic_oidc_metadata_requires_exact_issuer_and_supported_options() {
     for (field, value) in [
         ("issuer", json!("https://issuer.example/team/")),
         ("token_endpoint", json!("http://issuer.example/token")),
+        ("jwks_uri", json!(null)),
+        ("authorization_endpoint", json!(null)),
         ("id_token_signing_alg_values_supported", json!(["HS256"])),
         ("response_types_supported", json!(["token"])),
         ("grant_types_supported", json!(["client_credentials"])),
@@ -108,4 +110,49 @@ fn generic_oidc_signed_tokens_require_signature_nonce_and_identity_claims() {
     )
     .unwrap();
     assert!(verify_claims(&token, &decoding, &config, "saved").is_err());
+}
+
+#[tokio::test]
+async fn generic_oidc_discovery_rejects_malformed_timeout_and_blocked_requests() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new()
+        .route(
+            "/bad/.well-known/openid-configuration",
+            axum::routing::get(|| async { "invalid JSON" }),
+        )
+        .route(
+            "/slow/.well-known/openid-configuration",
+            axum::routing::get(|| async {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                "{}"
+            }),
+        );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = crate::utils::upstream::client_builder()
+        .timeout(Duration::from_millis(100))
+        .build()
+        .unwrap();
+    let mut config = OAuth2GenericConfig {
+        issuer: format!("{issuer}/bad"),
+        ..Default::default()
+    };
+    assert_eq!(
+        discover(&config, &client).await.unwrap_err(),
+        "Invalid OIDC discovery metadata"
+    );
+    config.issuer = format!("{issuer}/slow");
+    assert_eq!(
+        discover(&config, &client).await.unwrap_err(),
+        "OIDC discovery request failed"
+    );
+    config.issuer = "https://10.1.2.3".into();
+    assert!(crate::utils::egress::validate_url(&Url::parse(&config.issuer).unwrap()).is_err());
+    assert_eq!(
+        discover(&config, &client).await.unwrap_err(),
+        "OIDC discovery request failed"
+    );
+    server.abort();
 }

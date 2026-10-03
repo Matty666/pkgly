@@ -346,7 +346,7 @@ impl OAuth2Service {
         validate_export(
             runtime,
             redirect_url.as_str(),
-            saved_uri,
+            callback_uri.as_deref(),
             nonce.as_deref(),
             config_fingerprint.as_deref(),
         )?;
@@ -671,14 +671,17 @@ fn oauth_http_client() -> Result<HttpClient, OAuth2ServiceError> {
 fn validate_export(
     runtime: &OAuth2ProviderRuntime,
     current_uri: &str,
-    saved_uri: &str,
+    saved_uri: Option<&str>,
     nonce: Option<&str>,
     fingerprint: Option<&str>,
 ) -> Result<(), OAuth2ServiceError> {
     if let Some(config) = &runtime.generic {
         let current = generic::fingerprint(config, current_uri)
             .map_err(OAuth2ServiceError::ClientConstruction)?;
-        if nonce.is_none() || fingerprint != Some(current.as_str()) || saved_uri != current_uri {
+        if nonce.is_none()
+            || fingerprint != Some(current.as_str())
+            || saved_uri != Some(current_uri)
+        {
             return Err(OAuth2ServiceError::InvalidState);
         }
     }

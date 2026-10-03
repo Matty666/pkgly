@@ -81,30 +81,55 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     let private = RsaPrivateKey::new(&mut OsRng, 2048).unwrap();
     let encoding =
         jsonwebtoken::EncodingKey::from_rsa_der(private.to_pkcs1_der().unwrap().as_bytes());
-    let keys = json!({"keys":[{"kid":"test-key","kty":"RSA","n":URL_SAFE_NO_PAD.encode(private.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(private.e().to_bytes_be())}]});
+    let initial_keys = json!({"keys":[{"kid":"test-key","kty":"RSA","n":URL_SAFE_NO_PAD.encode(private.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(private.e().to_bytes_be())}]});
+    let keys = Arc::new(parking_lot::Mutex::new(initial_keys.clone()));
     let token = Arc::new(parking_lot::Mutex::new(String::new()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("http://{}", listener.local_addr().unwrap());
     let metadata = json!({"issuer":issuer,"authorization_endpoint":format!("{issuer}/arbitrary/auth"),
         "token_endpoint":format!("{issuer}/arbitrary/token"),"jwks_uri":format!("{issuer}/arbitrary/keys"),
         "response_types_supported":["code"],"id_token_signing_alg_values_supported":["RS256"],"token_endpoint_auth_methods_supported":["client_secret_basic","client_secret_post"]});
+    let partner_token = token.clone();
+    let partner_keys = keys.clone();
+    let keys_server = keys.clone();
     let token_server = token.clone();
     let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let requests_server = requests.clone();
     let app=axum::Router::new()
         .route("/.well-known/openid-configuration",axum::routing::get(move || { let metadata=metadata.clone(); async move { axum::Json(metadata) } }))
-        .route("/arbitrary/keys",axum::routing::get(move || { let keys=keys.clone(); async move { axum::Json(keys) } }))
+        .route("/arbitrary/keys",axum::routing::get(move || { let keys=keys_server.lock().clone(); async move { axum::Json(keys) } }))
         .route("/arbitrary/token",axum::routing::post(move |headers: axum::http::HeaderMap, axum::Form(form): axum::Form<std::collections::HashMap<String, String>>| {
             let token=token_server.lock().clone();
             requests_server.lock().push((headers, form));
             async move {
             axum::Json(json!({"access_token":"test-access","token_type":"Bearer","id_token":token}))
         } }));
+    let partner_requests = requests.clone();
+    let app = app
+        .route("/partner/signing-keys", axum::routing::get(move || {
+            let keys = partner_keys.lock().clone();
+            async move { axum::Json(keys) }
+        }))
+        .route("/partner/exchange", axum::routing::post(move |headers: axum::http::HeaderMap, axum::Form(form): axum::Form<std::collections::HashMap<String, String>>| {
+            let token = partner_token.lock().clone();
+            partner_requests.lock().push((headers, form));
+            async move { axum::Json(json!({"access_token":"test-access", "token_type":"Bearer", "id_token":token})) }
+        }));
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let settings: OAuth2Settings=serde_json::from_value(json!({"enabled":true,"redirect_base_url":"https://pkgly.example","casbin":null,
+    let mut settings: OAuth2Settings=serde_json::from_value(json!({"enabled":true,"redirect_base_url":"https://pkgly.example","casbin":null,
         "providers":[{"id":"company","display_name":"Company sign-in","issuer":issuer,"client_id":"pkgly","client_secret":"secret"}]})).unwrap();
+    let mut partner = settings.providers[0].clone();
+    partner.id = "partner-login".into();
+    partner.display_name = "Partner account".into();
+    partner.issuer = format!("{issuer}/partner");
+    partner.endpoints = Some(crate::app::config::OAuth2GenericEndpoints {
+        authorization_url: format!("{issuer}/partner/authorize"),
+        token_url: format!("{issuer}/partner/exchange"),
+        jwks_url: format!("{issuer}/partner/signing-keys"),
+    });
+    settings.providers.push(partner);
     site.update_oauth2_settings(Some(settings.clone()))
         .await
         .unwrap();
@@ -112,14 +137,18 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     assert_eq!(public.status(), StatusCode::OK);
 
     // Verified email wins over a different username. Missing/false verification uses the existing username fallback.
-    for (verified, expected, inactive, method) in [
-        (Some(true), first, false, "client_secret_basic"),
-        (Some(false), second, false, "client_secret_post"),
-        (None, second, false, "client_secret_basic"),
-        (Some(true), first, true, "client_secret_post"),
+    for (verified, expected, inactive, method, provider_index) in [
+        (Some(true), first, false, "client_secret_basic", 0),
+        (Some(false), second, false, "client_secret_post", 0),
+        (None, second, false, "client_secret_basic", 0),
+        (Some(true), first, true, "client_secret_post", 0),
+        (Some(true), first, false, "client_secret_post", 1),
     ] {
+        *keys.lock() = initial_keys.clone();
         let mut case_settings = settings.clone();
-        case_settings.providers[0].token_endpoint_auth_method = method.into();
+        case_settings.providers[provider_index].token_endpoint_auth_method = method.into();
+        let provider_id = case_settings.providers[provider_index].id.clone();
+        let provider_issuer = case_settings.providers[provider_index].issuer.clone();
         site.update_oauth2_settings(Some(case_settings.clone()))
             .await
             .unwrap();
@@ -131,20 +160,44 @@ async fn generic_oidc_database_login_state_and_account_policy() {
             .unwrap();
         let service = site.oauth2_service().unwrap();
         let auth = service
-            .begin_authorization("company".parse().unwrap(), None, Some("/browse".into()))
+            .begin_authorization(provider_id.parse().unwrap(), None, Some("/browse".into()))
             .unwrap();
         let snapshot = service.export_state(&auth.state).unwrap();
         persist_oauth_state(&site, &auth.state, &snapshot)
             .await
             .unwrap();
         let now = Utc::now().timestamp();
-        let mut claims = json!({"iss":issuer,"aud":"pkgly","sub":"opaque","iat":now,"exp":now+300,
+        let mut claims = json!({"iss":provider_issuer,"aud":"pkgly","sub":"opaque","iat":now,"exp":now+300,
             "nonce":snapshot.nonce,"preferred_username":"second","email":"first@example.com","name":"Standard user"});
         if let Some(verified) = verified {
             claims["email_verified"] = json!(verified);
         }
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
         header.kid = Some("test-key".into());
+        let signed = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
+        if provider_index == 0 && verified == Some(true) && !inactive {
+            service
+                .verify_generic_token(
+                    &snapshot.provider,
+                    &signed,
+                    snapshot.nonce.as_deref().unwrap(),
+                )
+                .await
+                .unwrap();
+            let mut rotated = initial_keys.clone();
+            rotated["keys"][0]["kid"] = json!("rotated-key");
+            *keys.lock() = rotated;
+            header.kid = Some("rotated-key".into());
+            let signed = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
+            service
+                .verify_generic_token(
+                    &snapshot.provider,
+                    &signed,
+                    snapshot.nonce.as_deref().unwrap(),
+                )
+                .await
+                .unwrap();
+        }
         *token.lock() = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
         // Replace the runtime to exercise callback recovery from database state.
         site.update_oauth2_settings(Some(case_settings))
