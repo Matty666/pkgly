@@ -107,6 +107,7 @@ const stubs = {
         h(
           "button",
           {
+            ...attrs,
             class: ["v-btn", attrs.class],
             type: "button",
             disabled: props.disabled,
@@ -163,6 +164,35 @@ describe("AdminSystem.vue", () => {
       }
       throw new Error(`unexpected GET ${url}`);
     });
+  });
+
+  it("adds a generic provider and sends its configuration", async () => {
+    httpPut.mockResolvedValue({});
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, { global: { stubs } });
+    await flushPromises();
+    await wrapper.get('[data-testid="add-generic-provider"]').trigger("click");
+    await wrapper.get('[data-testid="generic-id"] input').setValue("company-sso");
+    await wrapper.get('[data-testid="generic-name"] input').setValue("Company sign-in");
+    await wrapper.get('[data-testid="generic-issuer"] input').setValue("https://id.example");
+    await wrapper.get('[data-testid="generic-client-id"] input').setValue("pkgly");
+    await wrapper.get('[data-testid="generic-secret"] input').setValue("secret");
+    await wrapper.get("form.oauthForm").trigger("submit");
+    await flushPromises();
+    expect(httpPut).toHaveBeenCalledWith(
+      "/api/security/oauth2",
+      expect.objectContaining({
+        providers: [
+          expect.objectContaining({
+            id: "company-sso",
+            display_name: "Company sign-in",
+            issuer: "https://id.example",
+            client_id: "pkgly",
+            client_secret: "secret",
+          }),
+        ],
+      }),
+    );
   });
 
   it("loads single sign on settings without fetching webhooks", async () => {
