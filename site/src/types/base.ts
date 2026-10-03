@@ -106,7 +106,7 @@ export interface OidcProviderConfig {
   role_claims: string[];
 }
 
-export type OAuth2ProviderKind = "google" | "microsoft";
+export type OAuth2ProviderKind = string;
 
 export interface OAuth2ProviderSummary {
   client_id: string;
@@ -129,6 +129,7 @@ export interface OAuth2GroupRoleMapping {
 
 export interface InstanceOAuth2Provider {
   provider: string;
+  display_name?: string;
   redirect_path?: string | null;
 }
 
@@ -148,6 +149,7 @@ export interface OAuth2Configuration {
   auto_create_users: boolean;
   google?: OAuth2ProviderSummary | null;
   microsoft?: OAuth2ProviderSummary | null;
+  providers?: OAuth2GenericProvider[];
   casbin?: OAuth2CasbinConfig | null;
   group_role_mappings: OAuth2GroupRoleMapping[];
   available_roles: string[];
@@ -196,4 +198,19 @@ export enum RepositoryActions {
 }
 export function formatDate(date: Date) {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+export interface OAuth2GenericEndpoints {
+  authorization_url: string;
+  token_url: string;
+  jwks_url: string;
+}
+export interface OAuth2GenericProvider extends OAuth2ProviderSummary {
+  id: string;
+  display_name: string;
+  enabled: boolean;
+  issuer: string;
+  endpoints?: OAuth2GenericEndpoints | null;
+  token_endpoint_auth_method: "client_secret_basic" | "client_secret_post";
+  id_token_signing_alg: "RS256";
 }

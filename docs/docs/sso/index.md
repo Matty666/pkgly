@@ -83,7 +83,9 @@ When SSO is enabled, the login page shows a "Sign in with SSO" button above the 
 
 With these pieces in place, Pkgly delegates authentication to your enterprise IdP while retaining its existing session and authorization model.
 
-## OAuth2 / OIDC Login (Google & Microsoft)
+## OAuth2 / OIDC Login (Google, Microsoft, and custom providers)
+
+For configurable providers, see [Generic OIDC login](generic-oidc.md).
 
 In addition to trusting upstream SSO headers, Pkgly can act as an OAuth2 client and talk directly to Google or Microsoft Entra ID (Azure AD). The backend handles the full authorization code flow with PKCE, validates ID tokens, and optionally maps IdP groups/roles into Casbin RBAC policies.
 
