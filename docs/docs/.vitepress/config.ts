@@ -45,6 +45,10 @@ export default defineConfig({
       "/knowledge/": administrationBar(),
       "/repositoryTypes/": repositoryTypesBar(),
       "/cli/": cliBar(),
+      "/sso/": [{ text: "Single Sign-On", items: [
+        { text: "Overview", link: "/sso/" },
+        { text: "Generic OIDC login", link: "/sso/generic-oidc" },
+      ] }],
     },
   },
 });
