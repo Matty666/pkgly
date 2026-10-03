@@ -77,3 +77,21 @@ fn generic_oidc_configuration_rejects_invalid_contracts() {
         assert!(parsed.is_err() || parsed.unwrap().validate_providers().is_err());
     }
 }
+
+#[test]
+fn generic_oidc_role_mappings_require_configured_custom_provider_ids() {
+    use super::OAuth2Settings;
+    let mut settings: OAuth2Settings = serde_json::from_value(serde_json::json!({
+        "providers": [{"id":"company", "enabled":false}],
+        "group_role_mappings": [
+            {"provider":"company", "group":"staff", "roles":["read"]},
+            {"provider":"google", "group":"existing", "roles":["read"]}
+        ]
+    }))
+    .unwrap();
+    assert!(settings.validate_providers().is_ok());
+    settings.providers.clear();
+    assert!(settings.validate_providers().is_err());
+    settings.group_role_mappings.remove(0);
+    assert!(settings.validate_providers().is_ok());
+}

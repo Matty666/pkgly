@@ -86,7 +86,7 @@ pub struct OAuth2Service {
 
 impl OAuth2Service {
     /// Construct built-in clients without discovery. Use initialize for generic providers.
-    /// Returns an error when enabled settings have no valid clients.
+    /// Returns an error for invalid settings or missing provider configuration.
     pub fn new(settings: OAuth2Settings) -> Result<Option<Self>, OAuth2ServiceError> {
         if !settings.enabled {
             return Ok(None);
@@ -117,7 +117,7 @@ impl OAuth2Service {
             }
         }
 
-        if providers.is_empty() && !settings.providers.iter().any(|cfg| cfg.enabled) {
+        if providers.is_empty() && settings.providers.is_empty() {
             warn!("OAuth2 is enabled but no valid providers were configured");
             return Err(OAuth2ServiceError::MissingProviders);
         }

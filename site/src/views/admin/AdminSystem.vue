@@ -688,6 +688,12 @@ function addGenericProvider() {
   oauthForm.value.providers.push(defaultGenericProvider());
 }
 function removeGenericProvider(rowId: string) {
+  const removed = oauthForm.value.providers.find((provider) => provider.rowId === rowId);
+  if (removed) {
+    oauthForm.value.group_role_mappings = oauthForm.value.group_role_mappings.filter(
+      (mapping) => mapping.provider !== removed.id,
+    );
+  }
   oauthForm.value.providers = oauthForm.value.providers.filter(
     (provider) => provider.rowId !== rowId,
   );
