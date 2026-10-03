@@ -1,9 +1,11 @@
 # Generic OIDC login
 
 Pkgly supports configurable OpenID Connect (OIDC) providers beside Google and Microsoft.
+OIDC uses OAuth2 for authorization and adds a signed ID token for authentication.
+The admin page groups these providers under **OAuth2 Providers → Custom OIDC providers**.
+The separate **Single Sign-On → OIDC / JWT Providers (JWKS)** section validates tokens supplied through headers or cookies.
 Pkgly handles the authorization-code flow, PKCE, nonce validation, and local session creation.
 Provider configuration supplies the issuer, credentials, endpoints, scopes, and login label. Custom providers share the same implementation.
-The separate `security.sso` settings still configure trusted headers or externally supplied tokens.
 
 ## Configure a provider
 
