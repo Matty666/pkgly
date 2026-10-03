@@ -760,3 +760,25 @@ fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
             .is_empty()
     );
 }
+
+#[test]
+fn generic_oidc_admin_rejects_dangling_role_mappings() {
+    let current: OAuth2Settings = serde_json::from_value(json!({
+        "providers":[{"id":"company", "enabled":false}]
+    }))
+    .unwrap();
+    let mut payload = json!({"enabled":false, "providers":[], "login_path":"/api/user/oauth2/login", "callback_path":"/api/user/oauth2/callback", "auto_create_users":false, "group_role_mappings":[
+        {"provider":"company", "group":"staff", "roles":["read"]}
+    ]});
+    assert!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(payload.clone()).unwrap()
+        )
+        .is_err()
+    );
+    payload["group_role_mappings"] = json!([]);
+    assert!(
+        merge_oauth2_settings(Some(&current), serde_json::from_value(payload).unwrap()).is_ok()
+    );
+}

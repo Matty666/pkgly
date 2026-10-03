@@ -517,6 +517,13 @@ impl OAuth2Settings {
                 return Err("Duplicate OIDC provider ID".into());
             }
         }
+        for mapping in &self.group_role_mappings {
+            if let OAuth2ProviderKind::Custom(id) = &mapping.provider {
+                if !ids.contains(id) {
+                    return Err("OIDC role mapping references an unknown provider".into());
+                }
+            }
+        }
         Ok(())
     }
 }
