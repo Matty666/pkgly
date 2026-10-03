@@ -213,6 +213,9 @@ describe("AdminSystem.vue", () => {
             id_token_signing_alg: "RS256",
           },
         ];
+        response.data.group_role_mappings = [
+          { provider: "partner-login", group: "staff", roles: ["read"] },
+        ];
       }
       return response;
     });
@@ -220,6 +223,7 @@ describe("AdminSystem.vue", () => {
     const module = await import("@/views/admin/AdminSystem.vue");
     const wrapper = mount(module.default, { global: { stubs } });
     await flushPromises();
+    await wrapper.get("#oauth-enabled").setValue(true);
     expect(wrapper.get('[data-testid="generic-secret"] input').attributes("placeholder")).toContain(
       "keep the current secret",
     );
@@ -246,7 +250,7 @@ describe("AdminSystem.vue", () => {
     await flushPromises();
     expect(httpPut).toHaveBeenLastCalledWith(
       "/api/security/oauth2",
-      expect.objectContaining({ providers: [] }),
+      expect.objectContaining({ providers: [], group_role_mappings: [] }),
     );
   });
 
