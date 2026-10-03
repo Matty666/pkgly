@@ -30,6 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-on-failure: "true"
+      - run: cargo clippy --workspace
       - run: cargo test --workspace
 
   integration-tests:
@@ -93,3 +94,21 @@ jobs:
         with:
           persist-credentials: false
       - run: ./charts/pkgly/tests/unit.sh
+
+  frontend:
+    name: frontend tests and build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: site/.node-version
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm --prefix site ci
+      - run: npm --prefix site test
+      - run: npm --prefix site run build
+      - run: npm --prefix docs ci
+      - run: npm --prefix docs run docs:build

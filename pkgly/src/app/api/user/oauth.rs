@@ -19,7 +19,6 @@ use nr_core::user::permissions::UpdatePermissions;
 use oauth2::AuthorizationCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tokio::sync::OnceCell;
 use tracing::{error, info, instrument, warn};
 use utoipa::{IntoParams, ToSchema};
 
@@ -61,6 +60,7 @@ pub struct OAuthCallbackQuery {
 pub struct OAuthProviderDescriptor {
     pub provider: String,
     pub login_path: String,
+    pub display_name: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -88,13 +88,15 @@ struct IdTokenClaims {
 }
 
 const OAUTH_STATE_TTL_SECONDS: i64 = 300;
-static OAUTH_STATE_TABLE_INIT: OnceCell<()> = OnceCell::const_new();
 
 struct PersistedOAuthState {
     provider: String,
     pkce_verifier: String,
     redirect: Option<String>,
     created_at: DateTime<Utc>,
+    nonce: Option<String>,
+    callback_uri: Option<String>,
+    config_fingerprint: Option<String>,
 }
 
 impl PersistedOAuthState {
@@ -110,41 +112,13 @@ impl PersistedOAuthState {
             provider,
             pkce_verifier: self.pkce_verifier,
             redirect: self.redirect,
+            nonce: self.nonce,
+            callback_uri: self.callback_uri,
+            config_fingerprint: self.config_fingerprint,
         })
     }
 }
 
-async fn ensure_oauth_state_storage(site: &Pkgly) -> Result<(), InternalError> {
-    let pool = site.database.clone();
-    OAUTH_STATE_TABLE_INIT
-        .get_or_try_init(|| async move {
-            sqlx::query(
-                r#"
-                CREATE TABLE IF NOT EXISTS oauth2_states (
-                    state TEXT PRIMARY KEY,
-                    provider TEXT NOT NULL,
-                    pkce_verifier TEXT NOT NULL,
-                    redirect TEXT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                )
-                "#,
-            )
-            .execute(&pool)
-            .await?;
-
-            sqlx::query(
-                r#"
-                CREATE INDEX IF NOT EXISTS idx_oauth2_states_created_at
-                    ON oauth2_states (created_at)
-                "#,
-            )
-            .execute(&pool)
-            .await?;
-            Ok::<(), InternalError>(())
-        })
-        .await?;
-    Ok(())
-}
 #[utoipa::path(
     get,
     path = "/oauth2/providers",
@@ -154,27 +128,24 @@ async fn ensure_oauth_state_storage(site: &Pkgly) -> Result<(), InternalError> {
 )]
 #[instrument(skip(site), fields(project_module = "Authentication", auth.oauth2 = true))]
 pub async fn list_providers(State(site): State<Pkgly>) -> Result<Response, InternalError> {
-    let Some(settings) = site.oauth2_settings() else {
+    let Some(_settings) = site.oauth2_settings() else {
         return Ok(ResponseBuilder::not_found().body("OAuth2 login is not enabled"));
     };
 
-    let mut providers = Vec::new();
-    if settings.google.is_some() {
-        providers.push(OAuthProviderDescriptor {
-            provider: OAuth2ProviderKind::Google.to_string(),
-            login_path: format!("{}/{}", settings.login_path.trim_end_matches('/'), "google"),
-        });
-    }
-    if settings.microsoft.is_some() {
-        providers.push(OAuthProviderDescriptor {
-            provider: OAuth2ProviderKind::Microsoft.to_string(),
-            login_path: format!(
-                "{}/{}",
-                settings.login_path.trim_end_matches('/'),
-                "microsoft"
-            ),
-        });
-    }
+    let providers = site
+        .oauth2_service()
+        .map(|service| {
+            service
+                .provider_descriptors()
+                .into_iter()
+                .map(|item| OAuthProviderDescriptor {
+                    provider: item.provider,
+                    login_path: item.login_path,
+                    display_name: item.display_name,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     Ok(ResponseBuilder::ok().json(&OAuthProvidersResponse { providers }))
 }
@@ -301,90 +272,37 @@ pub async fn callback(
         return Ok(ResponseBuilder::not_found().body("OAuth2 login is not enabled"));
     };
     let base_url = resolve_base_url(&site);
-    let code_value = code.clone();
-    let state_value = state.clone();
-
+    let Some(persisted) = load_persisted_oauth_state(&site, state).await? else {
+        return Ok(oauth_service_error_response(
+            OAuth2ServiceError::InvalidState,
+        ));
+    };
+    service.forget_state(state);
+    if persisted.is_expired() {
+        return Ok(oauth_service_error_response(
+            OAuth2ServiceError::InvalidState,
+        ));
+    }
+    let export = match persisted.into_export() {
+        Ok(export) => export,
+        Err(err) => return Ok(oauth_service_error_response(err)),
+    };
     let exchange = match service
-        .exchange_code(
+        .exchange_code_with_export(
             base_url.as_deref(),
-            AuthorizationCode::new(code_value.clone()),
-            state,
+            AuthorizationCode::new(code.clone()),
+            export,
         )
         .await
     {
-        Ok(exchange) => {
-            if let Err(err) = delete_persisted_oauth_state(&site, state).await {
-                warn!(%err, "Failed to delete persisted OAuth2 state after successful exchange");
-            }
-            exchange
-        }
-        Err(OAuth2ServiceError::InvalidState) => {
-            match load_persisted_oauth_state(&site, state).await? {
-                Some(persisted) => {
-                    if persisted.is_expired() {
-                        if let Err(err) = delete_persisted_oauth_state(&site, state).await {
-                            warn!(%err, "Failed to delete expired OAuth2 state");
-                        }
-                        return Ok(oauth_service_error_response(
-                            OAuth2ServiceError::InvalidState,
-                        ));
-                    }
-                    let export = match persisted.into_export() {
-                        Ok(export) => export,
-                        Err(err) => {
-                            if let Err(cleanup_err) =
-                                delete_persisted_oauth_state(&site, state).await
-                            {
-                                warn!(%cleanup_err, "Failed to delete invalid OAuth2 state");
-                            }
-                            return Ok(oauth_service_error_response(err));
-                        }
-                    };
-                    match service
-                        .exchange_code_with_export(
-                            base_url.as_deref(),
-                            AuthorizationCode::new(code_value.clone()),
-                            export,
-                        )
-                        .await
-                    {
-                        Ok(exchange) => {
-                            if let Err(err) = delete_persisted_oauth_state(&site, state).await {
-                                warn!(
-                                    %err,
-                                    "Failed to delete persisted OAuth2 state after fallback exchange"
-                                );
-                            }
-                            exchange
-                        }
-                        Err(err) => {
-                            if let Err(cleanup_err) =
-                                delete_persisted_oauth_state(&site, state).await
-                            {
-                                warn!(%cleanup_err, "Failed to delete persisted OAuth2 state after fallback failure");
-                            }
-                            warn!(%err, "OAuth2 code exchange failed using persisted state");
-                            return Ok(oauth_service_error_response(err));
-                        }
-                    }
-                }
-                None => {
-                    warn!(state = %state_value, "OAuth2 state not found in persistent store");
-                    return Ok(oauth_service_error_response(
-                        OAuth2ServiceError::InvalidState,
-                    ));
-                }
-            }
-        }
+        Ok(exchange) => exchange,
         Err(err) => {
             warn!(%err, "OAuth2 code exchange failed");
             return Ok(oauth_service_error_response(err));
         }
     };
 
-    let Some(oauth_settings) = site.oauth2_settings_raw() else {
-        return Ok(ResponseBuilder::not_found().body("OAuth2 configuration missing"));
-    };
+    let oauth_settings = service.settings().clone();
 
     let id_token = match exchange.token_response.extra_fields().id_token.as_ref() {
         Some(token) => token,
@@ -415,60 +333,22 @@ pub async fn callback(
 
     let jwks_manager = JwksManager::new(fetcher, std::time::Duration::from_secs(3600));
 
-    // Create OIDC provider config based on the provider
-    let provider_config = match exchange.provider {
-        OAuth2ProviderKind::Google => OidcProviderConfig {
-            name: "google-oauth2".to_string(),
-            issuer: "https://accounts.google.com".to_string(),
-            audience: oauth_settings
-                .google
-                .as_ref()
-                .map(|g| g.client_id.clone())
-                .unwrap_or_default(),
-            jwks_url: Some("https://www.googleapis.com/oauth2/v3/certs".to_string()),
-            token_source: TokenSource::Header {
-                name: "Authorization".to_string(),
-                prefix: Some("Bearer ".to_string()),
-            },
-            subject_claim: None,
-            email_claim: None,
-            display_name_claim: None,
-            role_claims: Vec::new(),
+    let verified = match &exchange.provider {
+        OAuth2ProviderKind::Custom(_) => match exchange.nonce.as_deref() {
+            Some(nonce) => {
+                service
+                    .verify_generic_token(&exchange.provider, id_token, nonce)
+                    .await
+            }
+            None => Err("Missing saved OIDC nonce".into()),
         },
-        OAuth2ProviderKind::Microsoft => OidcProviderConfig {
-            name: "microsoft-oauth2".to_string(),
-            issuer: "https://login.microsoftonline.com/common/v2.0".to_string(),
-            audience: oauth_settings
-                .microsoft
-                .as_ref()
-                .map(|m| m.client_id.clone())
-                .unwrap_or_default(),
-            jwks_url: Some(
-                "https://login.microsoftonline.com/common/discovery/v2.0/keys".to_string(),
-            ),
-            token_source: TokenSource::Header {
-                name: "Authorization".to_string(),
-                prefix: Some("Bearer ".to_string()),
-            },
-            subject_claim: None,
-            email_claim: None,
-            display_name_claim: None,
-            role_claims: Vec::new(),
-        },
-    };
-
-    // Verify the ID token using JWKS
-    let claims_map = match jwks_manager.verify(id_token, &provider_config).await {
-        Ok(claims) => claims,
-        Err(err) => {
-            error!(%err, "Failed to verify id_token signature");
-            let api_error: APIErrorResponse<(), ()> = APIErrorResponse {
-                message: "Invalid identity token signature".into(),
-                details: None,
-                error: None,
-            };
-            return Ok(ResponseBuilder::unauthorized().json(&api_error));
+        _ => {
+            verify_builtin_token(&exchange.provider, &oauth_settings, id_token, &jwks_manager).await
         }
+    };
+    let claims_map = match verified {
+        Ok(claims) => claims,
+        Err(_) => return Ok(ResponseBuilder::unauthorized().body("Invalid identity token")),
     };
 
     // Extract the claims we need from the verified token
@@ -486,9 +366,9 @@ pub async fn callback(
             }
         };
 
-    let claim_groups = extract_roles(exchange.provider, &claims);
+    let claim_groups = extract_roles(exchange.provider.clone(), &claims);
     let mapped_roles = map_roles_from_claims(
-        exchange.provider,
+        exchange.provider.clone(),
         &claim_groups,
         &oauth_settings.group_role_mappings,
     );
@@ -712,16 +592,16 @@ async fn persist_oauth_state(
     state: &str,
     snapshot: &OAuthStateExport,
 ) -> Result<(), InternalError> {
-    ensure_oauth_state_storage(site).await?;
     prune_persisted_oauth_states(site).await?;
     sqlx::query(
         r#"
-        INSERT INTO oauth2_states (state, provider, pkce_verifier, redirect)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO oauth2_states (state, provider, pkce_verifier, redirect, nonce, callback_uri, config_fingerprint)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (state) DO UPDATE
         SET provider = EXCLUDED.provider,
             pkce_verifier = EXCLUDED.pkce_verifier,
             redirect = EXCLUDED.redirect,
+            nonce = EXCLUDED.nonce, callback_uri = EXCLUDED.callback_uri, config_fingerprint = EXCLUDED.config_fingerprint,
             created_at = NOW()
         "#,
     )
@@ -729,6 +609,9 @@ async fn persist_oauth_state(
     .bind(snapshot.provider.to_string())
     .bind(snapshot.pkce_verifier.as_str())
     .bind(snapshot.redirect.as_deref())
+    .bind(snapshot.nonce.as_deref())
+    .bind(snapshot.callback_uri.as_deref())
+    .bind(snapshot.config_fingerprint.as_deref())
     .execute(&site.database)
     .await?;
     Ok(())
@@ -738,12 +621,11 @@ async fn load_persisted_oauth_state(
     site: &Pkgly,
     state: &str,
 ) -> Result<Option<PersistedOAuthState>, InternalError> {
-    ensure_oauth_state_storage(site).await?;
     let row = sqlx::query(
         r#"
-        SELECT provider, pkce_verifier, redirect, created_at
-        FROM oauth2_states
+        DELETE FROM oauth2_states
         WHERE state = $1
+        RETURNING provider, pkce_verifier, redirect, created_at, nonce, callback_uri, config_fingerprint
         "#,
     )
     .bind(state)
@@ -755,25 +637,13 @@ async fn load_persisted_oauth_state(
         pkce_verifier: record.get::<String, _>("pkce_verifier"),
         redirect: record.get::<Option<String>, _>("redirect"),
         created_at: record.get::<DateTime<Utc>, _>("created_at"),
+        nonce: record.get("nonce"),
+        callback_uri: record.get("callback_uri"),
+        config_fingerprint: record.get("config_fingerprint"),
     }))
 }
 
-async fn delete_persisted_oauth_state(site: &Pkgly, state: &str) -> Result<(), InternalError> {
-    ensure_oauth_state_storage(site).await?;
-    sqlx::query(
-        r#"
-        DELETE FROM oauth2_states
-        WHERE state = $1
-        "#,
-    )
-    .bind(state)
-    .execute(&site.database)
-    .await?;
-    Ok(())
-}
-
 async fn prune_persisted_oauth_states(site: &Pkgly) -> Result<(), InternalError> {
-    ensure_oauth_state_storage(site).await?;
     sqlx::query(
         r#"
         DELETE FROM oauth2_states
@@ -898,3 +768,57 @@ fn map_roles_from_claims(
 
 #[cfg(test)]
 mod tests;
+
+async fn verify_builtin_token(
+    provider: &OAuth2ProviderKind,
+    settings: &OAuth2Settings,
+    id_token: &str,
+    jwks_manager: &JwksManager<ReqwestJwksFetcher>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let provider_config = match provider {
+        OAuth2ProviderKind::Google => OidcProviderConfig {
+            name: "google-oauth2".to_string(),
+            issuer: "https://accounts.google.com".to_string(),
+            audience: settings
+                .google
+                .as_ref()
+                .map(|g| g.client_id.clone())
+                .unwrap_or_default(),
+            jwks_url: Some("https://www.googleapis.com/oauth2/v3/certs".to_string()),
+            token_source: TokenSource::Header {
+                name: "Authorization".to_string(),
+                prefix: Some("Bearer ".to_string()),
+            },
+            subject_claim: None,
+            email_claim: None,
+            display_name_claim: None,
+            role_claims: Vec::new(),
+        },
+        OAuth2ProviderKind::Microsoft => OidcProviderConfig {
+            name: "microsoft-oauth2".to_string(),
+            issuer: "https://login.microsoftonline.com/common/v2.0".to_string(),
+            audience: settings
+                .microsoft
+                .as_ref()
+                .map(|m| m.client_id.clone())
+                .unwrap_or_default(),
+            jwks_url: Some(
+                "https://login.microsoftonline.com/common/discovery/v2.0/keys".to_string(),
+            ),
+            token_source: TokenSource::Header {
+                name: "Authorization".to_string(),
+                prefix: Some("Bearer ".to_string()),
+            },
+            subject_claim: None,
+            email_claim: None,
+            display_name_claim: None,
+            role_claims: Vec::new(),
+        },
+        OAuth2ProviderKind::Custom(_) => return Err("Unexpected generic provider".into()),
+    };
+
+    jwks_manager
+        .verify(id_token, &provider_config)
+        .await
+        .map_err(|_| "Invalid builtin identity token".into())
+}
