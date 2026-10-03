@@ -36,7 +36,9 @@ Key points:
 
 ## OIDC / JWT Providers (JWKS)
 
-Header-based SSO still works, but Pkgly can now validate signed ID tokens directly against a provider's JWKS endpoint. Add one or more providers under `security.sso.providers`:
+Pkgly validates signed tokens from configured providers under `security.sso.providers`.
+This section does not configure a native OIDC login client. Use [generic OIDC login](./generic-oidc) for that flow.
+Add one or more token providers:
 
 ```toml
 [security.sso]
@@ -65,7 +67,8 @@ Each provider entry:
 - `token_source`: Where to read the token (`header` or `cookie`). For headers you can supply an optional `prefix` (default `"Bearer "`).
 - `subject_claim` / `email_claim` / `display_name_claim`: Optional claim keys when a provider deviates from `preferred_username`, `email`, or `name`.
 
-JWKS keys are cached for one hour and refreshed automatically when they expire or a new `kid` shows up. Pkgly supports **RSA**, **EC** (P-256/P-384/P-521), and **EdDSA** (Ed25519/Ed448) key types. If no provider yields a valid token, Pkgly falls back to the legacy header-based extraction above.
+JWKS keys are cached for one hour and refreshed automatically when they expire or a new `kid` shows up. Pkgly supports **RSA**, **EC** (P-256/P-384/P-521), and **EdDSA** (Ed25519/Ed448) key types.
+If no provider supplies a valid token, Pkgly rejects the SSO login. Plain identity headers do not authenticate users.
 
 ### Runtime Configuration
 
