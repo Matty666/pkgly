@@ -1246,13 +1246,17 @@ function removeOidcProvider(id: string) {
                 placeholder="/api/user/oauth2/callback"
                 >Callback override (optional)</TextInput
               >
-              <label class="tokenSource"
-                >Client authentication
-                <select v-model="provider.token_endpoint_auth_method">
-                  <option value="client_secret_basic">HTTP Basic</option>
-                  <option value="client_secret_post">Request body</option>
-                </select>
-              </label>
+              <v-select
+                :id="`generic-client-authentication-${provider.rowId}`"
+                data-testid="generic-client-authentication"
+                v-model="provider.token_endpoint_auth_method"
+                label="Client authentication"
+                :items="[
+                  { title: 'HTTP Basic', value: 'client_secret_basic' },
+                  { title: 'Request body', value: 'client_secret_post' },
+                ]"
+                variant="outlined"
+                density="comfortable" />
             </div>
             <details>
               <summary>Explicit endpoints (optional)</summary>
