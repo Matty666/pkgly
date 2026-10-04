@@ -100,7 +100,13 @@ const stubs = {
   }),
   "v-btn": defineComponent({
     inheritAttrs: false,
-    props: ["disabled", "variant", "color", "prependIcon"],
+    props: {
+      disabled: Boolean,
+      variant: String,
+      color: String,
+      prependIcon: String,
+      block: Boolean,
+    },
     emits: ["click"],
     setup(props, { attrs, emit, slots }) {
       return () =>
@@ -177,6 +183,7 @@ describe("AdminSystem.vue", () => {
     await wrapper.get('[data-testid="generic-issuer"] input').setValue("https://id.example");
     await wrapper.get('[data-testid="generic-client-id"] input').setValue("pkgly");
     await wrapper.get('[data-testid="generic-secret"] input').setValue("secret");
+    await wrapper.get(".genericProviders select").setValue("client_secret_post");
     await wrapper.get("form.oauthForm").trigger("submit");
     await flushPromises();
     expect(httpPut).toHaveBeenCalledWith(
@@ -189,10 +196,70 @@ describe("AdminSystem.vue", () => {
             issuer: "https://id.example",
             client_id: "pkgly",
             client_secret: "secret",
+            token_endpoint_auth_method: "client_secret_post",
           }),
         ],
       }),
     );
+  });
+
+  it("places the full-width primary add action above custom provider cards", async () => {
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, { global: { stubs } });
+    await flushPromises();
+    const section = wrapper.get(".genericProviders");
+    const add = section.getComponent('[data-testid="add-generic-provider"]');
+    expect(add.props()).toMatchObject({
+      color: "primary",
+      variant: "outlined",
+      prependIcon: "mdi-plus",
+      block: true,
+    });
+    expect(section.classes()).toContain("providerSection");
+    expect(add.element.parentElement?.classList.contains("providerSection__header")).toBe(true);
+    await add.trigger("click");
+    expect(
+      add.element.compareDocumentPosition(section.get(".oidcProvider").element) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("places each provider's delete action in the bottom-right action row", async () => {
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, { global: { stubs } });
+    await flushPromises();
+    await wrapper.get('[data-testid="add-generic-provider"]').trigger("click");
+    await wrapper.get('[data-testid="add-generic-provider"]').trigger("click");
+    const cards = wrapper.findAll(".genericProviders .oidcProvider");
+    for (const card of cards) {
+      const actions = card.get(".providerActions");
+      expect(card.element.lastElementChild).toBe(actions.element);
+      expect(actions.getComponent(stubs["v-btn"]).props()).toMatchObject({
+        color: "error",
+        variant: "text",
+        prependIcon: "mdi-delete",
+      });
+    }
+    await cards[1].get(".providerActions button").trigger("click");
+    expect(wrapper.findAll(".genericProviders .oidcProvider")).toHaveLength(1);
+    expect(wrapper.get(".genericProviders .oidcProvider").element).toBe(cards[0].element);
+  });
+
+  it("uses the SSO token-source styling for the client authentication selector", async () => {
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, { global: { stubs } });
+    await flushPromises();
+    await wrapper.get("#sso-enabled").setValue(true);
+    await wrapper.get(".ssoForm .providerSection__header button").trigger("click");
+    await wrapper.get('[data-testid="add-generic-provider"]').trigger("click");
+    const source = wrapper.get(".ssoForm .tokenSource");
+    const authentication = wrapper.get(".genericProviders .tokenSource");
+    expect(authentication.classes()).toEqual(source.classes());
+    expect(authentication.text()).toContain("Client authentication");
+    expect(authentication.findAll("option").map((option) => option.element.value)).toEqual([
+      "client_secret_basic",
+      "client_secret_post",
+    ]);
   });
 
   it("retains a loaded secret while editing, disabling, and removing a custom provider", async () => {

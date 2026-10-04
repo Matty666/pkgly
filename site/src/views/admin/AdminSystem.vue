@@ -1170,12 +1170,25 @@ function removeOidcProvider(id: string) {
           </p>
         </div>
 
-        <section class="genericProviders">
-          <h3>Custom OIDC providers</h3>
-          <p>
-            Configure your identity provider with its issuer and client credentials. The issuer
-            supplies endpoints through discovery.
-          </p>
+        <section class="providerSection genericProviders">
+          <header class="providerSection__header">
+            <div class="providerSection__title">
+              <h3>Custom OIDC providers</h3>
+              <p class="hint">
+                Configure your identity provider with its issuer and client credentials. The issuer
+                supplies endpoints through discovery.
+              </p>
+            </div>
+            <v-btn
+              data-testid="add-generic-provider"
+              variant="outlined"
+              color="primary"
+              block
+              prepend-icon="mdi-plus"
+              @click="addGenericProvider">
+              Add provider
+            </v-btn>
+          </header>
           <div
             v-for="provider in oauthForm.providers"
             :key="provider.rowId"
@@ -1185,60 +1198,62 @@ function removeOidcProvider(id: string) {
               v-model="provider.enabled"
               >Enable provider</SwitchInput
             >
-            <TextInput
-              :id="`generic-id-${provider.rowId}`"
-              data-testid="generic-id"
-              v-model="provider.id"
-              >Provider ID</TextInput
-            >
-            <TextInput
-              :id="`generic-name-${provider.rowId}`"
-              data-testid="generic-name"
-              v-model="provider.display_name"
-              >Login button label</TextInput
-            >
-            <TextInput
-              :id="`generic-issuer-${provider.rowId}`"
-              data-testid="generic-issuer"
-              v-model="provider.issuer"
-              >Issuer URL</TextInput
-            >
-            <TextInput
-              :id="`generic-client-${provider.rowId}`"
-              data-testid="generic-client-id"
-              v-model="provider.client_id"
-              >Client ID</TextInput
-            >
-            <PasswordInput
-              :id="`generic-secret-${provider.rowId}`"
-              data-testid="generic-secret"
-              v-model="provider.client_secret"
-              autocomplete="new-password"
-              :placeholder="
-                provider.secretConfigured
-                  ? 'Leave blank to keep the current secret'
-                  : 'Client secret'
-              "
-              >Client secret</PasswordInput
-            >
-            <TextInput
-              :id="`generic-scopes-${provider.rowId}`"
-              v-model="provider.scopes"
-              >Scopes</TextInput
-            >
-            <TextInput
-              :id="`generic-callback-${provider.rowId}`"
-              v-model="provider.redirect_path"
-              placeholder="/api/user/oauth2/callback"
-              >Callback override (optional)</TextInput
-            >
-            <label
-              >Client authentication
-              <select v-model="provider.token_endpoint_auth_method">
-                <option value="client_secret_basic">HTTP Basic</option>
-                <option value="client_secret_post">Request body</option>
-              </select>
-            </label>
+            <div class="grid">
+              <TextInput
+                :id="`generic-id-${provider.rowId}`"
+                data-testid="generic-id"
+                v-model="provider.id"
+                >Provider ID</TextInput
+              >
+              <TextInput
+                :id="`generic-name-${provider.rowId}`"
+                data-testid="generic-name"
+                v-model="provider.display_name"
+                >Login button label</TextInput
+              >
+              <TextInput
+                :id="`generic-issuer-${provider.rowId}`"
+                data-testid="generic-issuer"
+                v-model="provider.issuer"
+                >Issuer URL</TextInput
+              >
+              <TextInput
+                :id="`generic-client-${provider.rowId}`"
+                data-testid="generic-client-id"
+                v-model="provider.client_id"
+                >Client ID</TextInput
+              >
+              <PasswordInput
+                :id="`generic-secret-${provider.rowId}`"
+                data-testid="generic-secret"
+                v-model="provider.client_secret"
+                autocomplete="new-password"
+                :placeholder="
+                  provider.secretConfigured
+                    ? 'Leave blank to keep the current secret'
+                    : 'Client secret'
+                "
+                >Client secret</PasswordInput
+              >
+              <TextInput
+                :id="`generic-scopes-${provider.rowId}`"
+                v-model="provider.scopes"
+                >Scopes</TextInput
+              >
+              <TextInput
+                :id="`generic-callback-${provider.rowId}`"
+                v-model="provider.redirect_path"
+                placeholder="/api/user/oauth2/callback"
+                >Callback override (optional)</TextInput
+              >
+              <label class="tokenSource"
+                >Client authentication
+                <select v-model="provider.token_endpoint_auth_method">
+                  <option value="client_secret_basic">HTTP Basic</option>
+                  <option value="client_secret_post">Request body</option>
+                </select>
+              </label>
+            </div>
             <details>
               <summary>Explicit endpoints (optional)</summary>
               <p>Leave all three fields blank for discovery, or supply all three URLs.</p>
@@ -1258,19 +1273,16 @@ function removeOidcProvider(id: string) {
                 >Signing key URL</TextInput
               >
             </details>
-            <v-btn
-              variant="text"
-              color="error"
-              @click="removeGenericProvider(provider.rowId)"
-              >Remove provider</v-btn
-            >
+            <div class="providerActions">
+              <v-btn
+                variant="text"
+                color="error"
+                prepend-icon="mdi-delete"
+                @click="removeGenericProvider(provider.rowId)">
+                Remove provider
+              </v-btn>
+            </div>
           </div>
-          <v-btn
-            data-testid="add-generic-provider"
-            variant="outlined"
-            @click="addGenericProvider"
-            >Add provider</v-btn
-          >
         </section>
 
         <div class="roleMappings">
