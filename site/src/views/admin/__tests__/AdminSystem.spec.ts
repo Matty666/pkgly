@@ -93,6 +93,21 @@ const stubs = {
   PasswordInput: inputStub,
   SwitchInput: switchStub,
   SubmitButton: submitButtonStub,
+  "v-select": defineComponent({
+    props: ["modelValue", "id", "label", "items", "variant", "density"],
+    emits: ["update:modelValue"],
+    template: `
+      <label>
+        {{ label }}
+        <select :id="id" :value="modelValue"
+          @change="$emit('update:modelValue', $event.target.value)">
+          <option v-for="item in items" :key="item.value" :value="item.value">
+            {{ item.title }}
+          </option>
+        </select>
+      </label>
+    `,
+  }),
   SpinnerElement: defineComponent({ template: "<div data-testid='spinner'></div>" }),
   FloatingErrorBanner: defineComponent({
     props: ["visible", "title", "message"],
@@ -245,21 +260,22 @@ describe("AdminSystem.vue", () => {
     expect(wrapper.get(".genericProviders .oidcProvider").element).toBe(cards[0].element);
   });
 
-  it("uses the SSO token-source styling for the client authentication selector", async () => {
+  it("aligns client authentication with the outlined text fields", async () => {
     const module = await import("@/views/admin/AdminSystem.vue");
     const wrapper = mount(module.default, { global: { stubs } });
     await flushPromises();
-    await wrapper.get("#sso-enabled").setValue(true);
-    await wrapper.get(".ssoForm .providerSection__header button").trigger("click");
     await wrapper.get('[data-testid="add-generic-provider"]').trigger("click");
-    const source = wrapper.get(".ssoForm .tokenSource");
-    const authentication = wrapper.get(".genericProviders .tokenSource");
-    expect(authentication.classes()).toEqual(source.classes());
-    expect(authentication.text()).toContain("Client authentication");
-    expect(authentication.findAll("option").map((option) => option.element.value)).toEqual([
-      "client_secret_basic",
-      "client_secret_post",
-    ]);
+    const authentication = wrapper.getComponent('[data-testid="generic-client-authentication"]');
+    expect(authentication.props()).toMatchObject({
+      label: "Client authentication",
+      variant: "outlined",
+      density: "comfortable",
+      modelValue: "client_secret_basic",
+      items: [
+        { title: "HTTP Basic", value: "client_secret_basic" },
+        { title: "Request body", value: "client_secret_post" },
+      ],
+    });
   });
 
   it("retains a loaded secret while editing, disabling, and removing a custom provider", async () => {
