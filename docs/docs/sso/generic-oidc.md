@@ -10,6 +10,9 @@ Provider configuration supplies the issuer, credentials, endpoints, scopes, and 
 ## Configure a provider
 
 Use **Administration → System → OAuth2 Providers → Custom OIDC providers**.
+Select the orange **Add provider** button above the provider cards.
+Each card has a red **Remove provider** button with a delete icon at the bottom right.
+Use the **Client authentication** dropdown to choose HTTP Basic or request-body credentials.
 Supply a stable provider ID, login label, issuer URL, client ID, and client secret.
 Register the Pkgly callback URI with your identity provider: `https://packages.example.com/api/user/oauth2/callback`.
 Enable OAuth2 and the provider, then save the settings. Changes apply without a restart.
