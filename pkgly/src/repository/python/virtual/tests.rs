@@ -127,3 +127,48 @@ fn build_simple_index_html_canonicalizes_hosted_member_relative_href() {
         "https://files.pythonhosted.org/packages/pkgly.whl?download=1#sha256=external"
     );
 }
+
+#[test]
+fn build_simple_index_html_preserves_href_when_repository_name_case_differs() {
+    // Repository lookup accepts these names with different casing from the canonical base below.
+    let href = "/repositories/Test-Storage/Python-Virtual/packages/demo.whl?download=1#sha256=abc";
+    let html = build_simple_index_html(
+        "demo",
+        "/repositories/test-storage/python-virtual",
+        vec![(
+            0,
+            "python-proxy".to_string(),
+            vec![SimpleIndexLink {
+                href: href.to_string(),
+                text: "demo.whl".to_string(),
+                requires_python: None,
+            }],
+        )],
+    );
+
+    assert_eq!(
+        parse_simple_index_links(&html)[0].href,
+        href,
+        "Different repository-name casing must not duplicate the repository prefix"
+    );
+}
+
+#[test]
+fn build_simple_index_html_preserves_other_repository_href() {
+    let href = "/repositories/test-storage/python-proxy/packages/demo.whl?download=1#sha256=abc";
+    let html = build_simple_index_html(
+        "demo",
+        "/repositories/test-storage/python-virtual",
+        vec![(
+            0,
+            "python-proxy".to_string(),
+            vec![SimpleIndexLink {
+                href: href.to_string(),
+                text: "demo.whl".to_string(),
+                requires_python: None,
+            }],
+        )],
+    );
+
+    assert_eq!(parse_simple_index_links(&html)[0].href, href);
+}

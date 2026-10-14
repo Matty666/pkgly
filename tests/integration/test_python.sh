@@ -20,6 +20,53 @@ print_section "Python Integration Tests"
 WORKSPACE=$(create_workspace "python")
 cd "$WORKSPACE"
 
+assert_hosted_trailing_slash_redirect() {
+    local method="$1"
+    local route_prefix="$2"
+    local repository_path="$3"
+    local index_path="$4"
+    local test_id="$5"
+    local requested_url="${PKGLY_URL}${route_prefix}/${index_path}"
+    local expected_location="/repositories/${repository_path}/${index_path}/"
+    local headers_file="${WORKSPACE}/${test_id}.headers"
+    local body_file="${WORKSPACE}/${test_id}.body"
+    local status
+    local location
+    local curl_method=()
+    if [[ "$method" == "HEAD" ]]; then
+        curl_method=(-I)
+    fi
+
+    print_test "Hosted: ${method} ${route_prefix}/${index_path} redirects to the canonical index"
+    # Do not follow redirects: the first Location must include /repositories/.
+    if ! status=$(curl -sS "${curl_method[@]}" -D "$headers_file" -o /dev/null \
+        -w '%{http_code}' "$requested_url"); then
+        status="000"
+    fi
+    location=$(sed -n -E 's/^[Ll]ocation:[[:space:]]*([^\r]*)\r?$/\1/p' "$headers_file" | tail -n 1)
+    if [[ "$status" != "301" || "$location" != "$expected_location" ]]; then
+        record_output "$(printf 'status=%s\nlocation=%s\nexpected_location=%s\n' \
+            "$status" "$location" "$expected_location")"
+        fail "Hosted redirect did not return the canonical Location"
+        return
+    fi
+
+    if ! status=$(curl -sS "${curl_method[@]}" -o "$body_file" -w '%{http_code}' \
+        "${PKGLY_URL}${location}"); then
+        status="000"
+    fi
+    if [[ "$status" != "200" ]]; then
+        fail "Hosted redirect target returned ${status} instead of 200"
+    elif [[ "$method" == "GET" && "$index_path" == "simple" ]] &&
+        ! grep -q '<title>Simple index</title>' "$body_file"; then
+        record_output "$(cat "$body_file")"
+        fail "Hosted redirect target did not serve the Python index"
+    else
+        clear_last_log
+        pass
+    fi
+}
+
 # Copy fixture
 cp -r "$FIXTURE_DIR" "$WORKSPACE/test-pkg"
 cd "$WORKSPACE/test-pkg"
@@ -206,6 +253,46 @@ if assert_http_status "404" "$STATUS"; then
 else
     fail "Expected 404, got $STATUS"
 fi
+
+# Test 12: Hosted root index redirects GET and HEAD to the canonical URL
+for method in GET HEAD; do
+    assert_hosted_trailing_slash_redirect "$method" "/repositories/${PYTHON_HOSTED_REPO}" \
+        "$PYTHON_HOSTED_REPO" "simple" "hosted-root-${method}"
+done
+
+# Test 13: Hosted package index redirects GET and HEAD through each route alias
+for method in GET HEAD; do
+    for route in repositories storages direct; do
+        case "$route" in
+            direct) route_prefix="/${PYTHON_HOSTED_REPO}" ;;
+            *) route_prefix="/${route}/${PYTHON_HOSTED_REPO}" ;;
+        esac
+        assert_hosted_trailing_slash_redirect "$method" "$route_prefix" \
+            "$PYTHON_HOSTED_REPO" "simple/${PACKAGE_NAME}" "hosted-${route}-${method}"
+    done
+done
+
+# Test 14: Create a hosted repository in storage whose name matches the api route
+print_test "Create hosted Python repository in storage named api"
+STORAGE_LIST=$(api_get "/api/storage/list")
+if ! echo "$STORAGE_LIST" | jq -e '.[] | select(.name == "api")' > /dev/null; then
+    api_post "/api/storage/new/Local" -H "Content-Type: application/json" \
+        -d '{"name":"api","config":{"type":"Local","settings":{"path":"/storage/python-redirect-api"}}}' \
+        > "${WORKSPACE}/api-storage.json"
+fi
+REPO_LIST=$(api_get "/api/repository/list")
+if ! echo "$REPO_LIST" | jq -e '.[] | select(.storage_name == "api" and .name == "python-redirect-test")' > /dev/null; then
+    api_post "/api/repository/new/python" -H "Content-Type: application/json" \
+        -d '{"name":"python-redirect-test","storage_name":"api","configs":{"python":{"type":"Hosted"},"auth":{"enabled":false}}}' \
+        > "${WORKSPACE}/api-python-redirect-test.json"
+fi
+pass
+
+# Test 15: Hosted redirects keep /repositories/ when the storage name is api
+for method in GET HEAD; do
+    assert_hosted_trailing_slash_redirect "$method" "/repositories/api/python-redirect-test" \
+        "api/python-redirect-test" "simple" "hosted-api-${method}"
+done
 
 # Cleanup
 cleanup_workspace "$WORKSPACE"

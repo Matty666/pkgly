@@ -147,7 +147,7 @@ extract_selected_wheel_href() {
     local route_label="$1"
     local member_label="$2"
     local index_body="$3"
-    local canonical_prefix="/repositories/${PYTHON_VIRTUAL_REPO}/"
+    local canonical_prefix="${4:-/repositories/${PYTHON_VIRTUAL_REPO}/}"
     local href
     local wheel_hrefs=()
 
@@ -189,6 +189,43 @@ check_virtual_index_and_artifact() {
     else
         fail "Virtual ${member_label}/${route_label} index or artifact validation failed"
     fi
+}
+
+check_virtual_proxy_request_and_cached_index() {
+    local request_label="$1"
+    local request_path="$2"
+    local package_name="$3"
+    local first_body="${WORKSPACE}/${request_label}.first.html"
+    local cached_body="${WORKSPACE}/${request_label}.cached.html"
+    local phase
+    local index_body
+
+    # Fetch both indexes before checking links, so a broken first response cannot skip the cache check.
+    print_test "Virtual: ${request_label} proxy index and subsequent canonical request succeed"
+    if fetch_virtual_index "$request_label" "live-pypi" "${PKGLY_URL}${request_path}" \
+        "$first_body" "${WORKSPACE}/${request_label}.first.headers" &&
+        fetch_virtual_index "canonical-after-${request_label}" "live-pypi" \
+            "${PKGLY_URL}/repositories/${PYTHON_VIRTUAL_REPO}/simple/${package_name}/" \
+            "$cached_body" "${WORKSPACE}/${request_label}.cached.headers"; then
+        clear_last_log
+        pass
+    else
+        fail "Could not fetch both virtual indexes for ${request_label}"
+        return
+    fi
+
+    for phase in first cached; do
+        index_body="${WORKSPACE}/${request_label}.${phase}.html"
+        print_test "Virtual: ${request_label}/${phase} has canonical links and downloadable artifacts"
+        if extract_selected_wheel_href "$request_label/$phase" "live-pypi" "$index_body" &&
+            assert_artifact_2xx "$request_label/$phase" "live-pypi" \
+                "${PKGLY_URL}${SELECTED_WHEEL_HREF}" "${request_label}-${phase}"; then
+            clear_last_log
+            pass
+        else
+            fail "Invalid virtual artifact link for ${request_label}/${phase}"
+        fi
+    done
 }
 
 install_from_virtual_index() {
@@ -407,6 +444,7 @@ else
     fi
 fi
 
+# Verify that the virtual package index contains versions from both hosted members.
 print_test "Virtual: merged /simple/<pkg>/ includes ${VERSION_1} and ${VERSION_2}"
 SIMPLE_VIRTUAL_PATH="/repositories/${PYTHON_VIRTUAL_REPO}/simple/${PACKAGE_NAME}/"
 MERGED_INDEX_BODY="${WORKSPACE}/merged.index.html"
@@ -426,34 +464,82 @@ else
     fail "Virtual index did not contain both member versions"
 fi
 
+# Verify the canonical route redirects a package index without a trailing slash.
 assert_virtual_trailing_slash_redirect "canonical" \
     "/repositories/${PYTHON_VIRTUAL_REPO}" "$PACKAGE_NAME" "redirect-canonical"
+# Verify the storages alias redirects to the canonical package index URL.
 assert_virtual_trailing_slash_redirect "storages" \
     "/storages/${PYTHON_VIRTUAL_REPO}" "$PACKAGE_NAME" "redirect-storages"
+# Verify the direct route redirects to the canonical package index URL.
 assert_virtual_trailing_slash_redirect "direct" \
     "/${PYTHON_VIRTUAL_REPO}" "$PACKAGE_NAME" "redirect-direct"
 
+# Verify hosted member links and artifact GET/HEAD through the canonical route.
 check_virtual_index_and_artifact "canonical" "hosted" \
     "/repositories/${PYTHON_VIRTUAL_REPO}" "$PACKAGE_NAME" "hosted-canonical"
+# Verify hosted member links and artifact GET/HEAD through the storages alias.
 check_virtual_index_and_artifact "storages" "hosted" \
     "/storages/${PYTHON_VIRTUAL_REPO}" "$PACKAGE_NAME" "hosted-storages"
+# Verify hosted member links and artifact GET/HEAD through the direct route.
 check_virtual_index_and_artifact "direct" "hosted" \
     "/${PYTHON_VIRTUAL_REPO}" "$PACKAGE_NAME" "hosted-direct"
+
+# Verify a direct proxy request with an encoded path uses the proxy's own artifact URLs.
+print_test "Proxy: encoded package path keeps artifact links under the proxy repository"
+PROXY_INDEX_BODY="${WORKSPACE}/proxy-encoded.html"
+if fetch_virtual_index "direct-proxy" "live-pypi" \
+    "${PKGLY_URL}/repositories/${PYTHON_PROXY_REPO}/simple/i%64na/" \
+    "$PROXY_INDEX_BODY" "${WORKSPACE}/proxy-encoded.headers" &&
+    extract_selected_wheel_href "direct-proxy" "live-pypi" "$PROXY_INDEX_BODY" \
+        "/repositories/${PYTHON_PROXY_REPO}/" &&
+    assert_artifact_2xx "direct-proxy" "live-pypi" \
+        "${PKGLY_URL}${SELECTED_WHEEL_HREF}" "proxy-encoded"; then
+    clear_last_log
+    pass
+else
+    fail "Direct proxy request did not produce a valid proxy artifact link"
+fi
+
+# Each variant must be the first virtual request for its package, before the cache hides URL rewriting.
+# Case sensitivity: send an uppercase storage name and a mixed-case repository name.
+# The helper then requests the lowercase canonical URL to check the cached links too.
+check_virtual_proxy_request_and_cached_index "case-insensitive-repository-names" \
+    "/repositories/${TEST_STORAGE^^}/Python-Virtual/simple/requests/" "requests"
+# Verify an encoded package path produces valid virtual links before and after caching.
+check_virtual_proxy_request_and_cached_index "percent-encoded" \
+    "/repositories/${PYTHON_VIRTUAL_REPO}/simple/i%64na/" "idna"
+
+# Verify the URL fix does not accept paths that the repository path validator rejects.
+print_test "Virtual: repeated slashes remain invalid repository paths"
+STATUS=$(get_http_status "${PKGLY_URL}/repositories/${PYTHON_VIRTUAL_REPO}/simple//certifi/")
+if assert_http_status "400" "$STATUS"; then
+    pass
+else
+    fail "Expected 400 for repeated slashes, got ${STATUS}"
+fi
+
+# Verify proxy member links and artifact GET/HEAD through the canonical route.
 check_virtual_index_and_artifact "canonical" "live-pypi" \
     "/repositories/${PYTHON_VIRTUAL_REPO}" "requests" "proxy-canonical"
+# Verify proxy member links and artifact GET/HEAD through the storages alias.
 check_virtual_index_and_artifact "storages" "live-pypi" \
     "/storages/${PYTHON_VIRTUAL_REPO}" "requests" "proxy-storages"
+# Verify proxy member links and artifact GET/HEAD through the direct route.
 check_virtual_index_and_artifact "direct" "live-pypi" \
     "/${PYTHON_VIRTUAL_REPO}" "requests" "proxy-direct"
 
+# Verify pip installs the first hosted version through the canonical virtual URL.
 install_from_virtual_index "canonical" \
     "/repositories/${PYTHON_VIRTUAL_REPO}" "${PACKAGE_NAME}==${VERSION_1}" \
     "$VERSION_1" "venv-v1"
+# Verify pip installs the second hosted version through the direct virtual URL.
 install_from_virtual_index "direct" \
     "/${PYTHON_VIRTUAL_REPO}" "${PACKAGE_NAME}==${VERSION_2}" \
     "$VERSION_2" "venv-v2"
+# Verify pip installs a proxied package through the canonical virtual URL.
 install_from_virtual_index "canonical" \
     "/repositories/${PYTHON_VIRTUAL_REPO}" "requests==2.31.0" "" "venv-proxy"
+# Verify pip installs a proxied package through the direct virtual URL.
 install_from_virtual_index "direct" \
     "/${PYTHON_VIRTUAL_REPO}" "requests==2.31.0" "" "venv-proxy-direct"
 
@@ -473,6 +559,7 @@ else
     fi
 fi
 
+# Verify the hosted target's package index contains the version published through virtual.
 print_test "Hosted: /simple/<pkg>/ contains forwarded ${VERSION_3}"
 SIMPLE_HOSTED_PATH="/repositories/${PYTHON_HOSTED_REPO}/simple/${PACKAGE_NAME}/"
 FORWARDED_INDEX_BODY="${WORKSPACE}/forwarded.index.html"
