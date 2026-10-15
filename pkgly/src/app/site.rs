@@ -312,7 +312,7 @@ impl Pkgly {
         }
 
         let oauth2_service = match security.oauth2.clone() {
-            Some(cfg) if cfg.enabled => match OAuth2Service::new(cfg.clone()) {
+            Some(cfg) if cfg.enabled => match OAuth2Service::initialize(cfg.clone()).await {
                 Ok(Some(service)) => Some(Arc::new(service)),
                 Ok(None) => None,
                 Err(err) => {
@@ -591,7 +591,8 @@ impl Pkgly {
 
         if let Some(cfg) = settings.clone() {
             if cfg.enabled {
-                let service = OAuth2Service::new(cfg.clone())
+                let service = OAuth2Service::initialize(cfg.clone())
+                    .await
                     .map_err(|err| anyhow!("Failed to initialize OAuth2 service: {err}"))?
                     .ok_or_else(|| {
                         anyhow!("OAuth2 configuration is missing provider credentials")
@@ -607,6 +608,11 @@ impl Pkgly {
             }
         }
 
+        if let Some(settings) = &settings {
+            ApplicationSettings::upsert("security.oauth2", settings, &self.database).await?;
+        } else {
+            ApplicationSettings::delete("security.oauth2", &self.database).await?;
+        }
         {
             let mut security = self.inner.general_security_settings.write();
             security.oauth2 = settings.clone();
@@ -625,12 +631,6 @@ impl Pkgly {
         {
             let mut rbac_lock = self.inner.oauth2_rbac.write();
             *rbac_lock = new_rbac;
-        }
-
-        if let Some(settings) = settings {
-            ApplicationSettings::upsert("security.oauth2", &settings, &self.database).await?;
-        } else {
-            ApplicationSettings::delete("security.oauth2", &self.database).await?;
         }
 
         Ok(())

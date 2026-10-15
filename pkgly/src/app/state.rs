@@ -59,30 +59,53 @@ pub struct InstanceOAuth2Settings {
 #[derive(Debug, Serialize, Clone, ToSchema)]
 pub struct InstanceOAuth2Provider {
     pub provider: String,
+    /// Configured label for the login button.
+    pub display_name: String,
     pub redirect_path: Option<String>,
 }
 
 impl From<&OAuth2Settings> for InstanceOAuth2Settings {
     fn from(settings: &OAuth2Settings) -> Self {
         let mut providers = Vec::new();
-        if settings.google.is_some() {
+        if settings
+            .google
+            .as_ref()
+            .is_some_and(|cfg| !cfg.client_id.is_empty() && !cfg.client_secret.is_empty())
+        {
             providers.push(InstanceOAuth2Provider {
                 provider: "google".to_string(),
+                display_name: "Google".into(),
                 redirect_path: settings
                     .google
                     .as_ref()
                     .and_then(|cfg| cfg.redirect_path.clone()),
             });
         }
-        if settings.microsoft.is_some() {
+        if settings
+            .microsoft
+            .as_ref()
+            .is_some_and(|cfg| !cfg.client_id.is_empty() && !cfg.client_secret.is_empty())
+        {
             providers.push(InstanceOAuth2Provider {
                 provider: "microsoft".to_string(),
+                display_name: "Microsoft".into(),
                 redirect_path: settings
                     .microsoft
                     .as_ref()
                     .and_then(|cfg| cfg.redirect_path.clone()),
             });
         }
+        providers.extend(
+            settings
+                .providers
+                .iter()
+                .filter(|cfg| cfg.enabled)
+                .map(|cfg| InstanceOAuth2Provider {
+                    provider: cfg.id.clone(),
+                    display_name: cfg.display_name.clone(),
+                    redirect_path: cfg.redirect_path.clone(),
+                }),
+        );
         Self {
             login_path: settings.login_path.clone(),
             callback_path: settings.callback_path.clone(),

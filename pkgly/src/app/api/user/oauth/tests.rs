@@ -82,3 +82,50 @@ fn oauth_denied_redirect_sets_location_header() {
         .and_then(|value| value.to_str().ok());
     assert_eq!(location, Some("/oauth/denied?reason=invalid_state"));
 }
+
+#[test]
+fn generic_oidc_principal_uses_standard_claims_and_never_assumes_verified_email() {
+    for verified in [None, Some(false), Some(true)] {
+        let claims: IdTokenClaims = serde_json::from_value(serde_json::json!({
+            "sub":"opaque-id", "preferred_username":"User.Name", "email":"user@example.com",
+            "email_verified":verified, "name":"Display Name"
+        }))
+        .unwrap();
+        let principal = build_principal(&claims);
+        assert_eq!(principal.username, "user_name");
+        assert_eq!(principal.email_verified, verified == Some(true));
+        assert_eq!(principal.display_name, "Display Name");
+        assert_eq!(principal.email.as_deref(), Some("user@example.com"));
+        assert!(extract_roles("company-sso".parse().unwrap(), &claims).is_empty());
+    }
+}
+
+mod database;
+
+#[test]
+fn generic_oidc_persisted_state_expiry_and_legacy_rows() {
+    let legacy = PersistedOAuthState {
+        provider: "google".into(),
+        pkce_verifier: "saved".into(),
+        redirect: None,
+        created_at: Utc::now(),
+        nonce: None,
+        callback_uri: None,
+        config_fingerprint: None,
+    };
+    assert!(!legacy.is_expired());
+    assert_eq!(
+        legacy.into_export().unwrap().provider,
+        OAuth2ProviderKind::Google
+    );
+    let expired = PersistedOAuthState {
+        provider: "company".into(),
+        pkce_verifier: "saved".into(),
+        redirect: None,
+        created_at: Utc::now() - Duration::seconds(301),
+        nonce: Some("nonce".into()),
+        callback_uri: None,
+        config_fingerprint: None,
+    };
+    assert!(expired.is_expired());
+}

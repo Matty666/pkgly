@@ -9,8 +9,9 @@ use crate::{
         authentication::Authentication,
         authentication::oauth::normalize_scopes,
         config::{
-            OAuth2CasbinConfig, OAuth2GoogleConfig, OAuth2GroupRoleMapping, OAuth2MicrosoftConfig,
-            OAuth2Settings, OidcProviderConfig, PasswordRules, SsoSettings, TokenSource,
+            OAuth2CasbinConfig, OAuth2GenericConfig, OAuth2GenericEndpoints, OAuth2GoogleConfig,
+            OAuth2GroupRoleMapping, OAuth2MicrosoftConfig, OAuth2Settings, OidcProviderConfig,
+            PasswordRules, SsoSettings, TokenSource,
         },
     },
     error::InternalError,
@@ -59,6 +60,29 @@ struct OAuth2ProviderSettingsResponse {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+struct GenericProviderResponse {
+    id: String,
+    display_name: String,
+    enabled: bool,
+    issuer: String,
+    client_id: String,
+    scopes: Vec<String>,
+    redirect_path: Option<String>,
+    endpoints: Option<OAuth2GenericEndpoints>,
+    token_endpoint_auth_method: String,
+    id_token_signing_alg: String,
+    client_secret_configured: bool,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+struct GenericProviderRequest {
+    #[serde(default)]
+    client_secret: Option<String>,
+    #[serde(flatten)]
+    config: OAuth2GenericConfig,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 struct OAuth2SettingsResponse {
     enabled: bool,
     login_path: String,
@@ -70,6 +94,7 @@ struct OAuth2SettingsResponse {
     google: Option<OAuth2ProviderSettingsResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     microsoft: Option<OAuth2ProviderSettingsResponse>,
+    providers: Vec<GenericProviderResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     casbin: Option<OAuth2CasbinConfig>,
     #[serde(default)]
@@ -114,6 +139,8 @@ pub struct OAuth2SettingsRequest {
     google: Option<OAuth2ProviderSettingsRequest>,
     #[serde(default)]
     microsoft: Option<OAuth2MicrosoftSettingsRequest>,
+    #[serde(default)]
+    providers: Option<Vec<GenericProviderRequest>>,
     #[serde(default)]
     casbin: Option<OAuth2CasbinConfig>,
     #[serde(default)]
@@ -229,6 +256,23 @@ fn build_oauth2_response(settings: &OAuth2Settings) -> OAuth2SettingsResponse {
         auto_create_users: settings.auto_create_users,
         google,
         microsoft,
+        providers: settings
+            .providers
+            .iter()
+            .map(|cfg| GenericProviderResponse {
+                id: cfg.id.clone(),
+                display_name: cfg.display_name.clone(),
+                enabled: cfg.enabled,
+                issuer: cfg.issuer.clone(),
+                client_id: cfg.client_id.clone(),
+                scopes: cfg.scopes.clone(),
+                redirect_path: cfg.redirect_path.clone(),
+                endpoints: cfg.endpoints.clone(),
+                token_endpoint_auth_method: cfg.token_endpoint_auth_method.clone(),
+                id_token_signing_alg: cfg.id_token_signing_alg.clone(),
+                client_secret_configured: !cfg.client_secret.is_empty(),
+            })
+            .collect(),
         casbin: settings.casbin.clone(),
         group_role_mappings: settings.group_role_mappings.clone(),
         available_roles: settings
@@ -292,7 +336,7 @@ fn merge_oauth2_settings(
         })
         .collect();
 
-    Ok(OAuth2Settings {
+    let settings = OAuth2Settings {
         enabled: request.enabled,
         login_path,
         callback_path,
@@ -300,9 +344,12 @@ fn merge_oauth2_settings(
         auto_create_users: request.auto_create_users,
         google,
         microsoft,
+        providers: merge_generic_settings(current, request.providers)?,
         casbin,
         group_role_mappings,
-    })
+    };
+    settings.validate_providers()?;
+    Ok(settings)
 }
 
 fn sanitize_header_name(header: &str) -> Result<String, String> {
@@ -518,7 +565,7 @@ mod tests;
     get,
     path = "/oauth2",
     tag = "security",
-    responses((status = 200, description = "Current OAuth2 configuration", body = OAuth2Settings)),
+    responses((status = 200, description = "Current OAuth2 configuration", body = OAuth2SettingsResponse)),
     security(("session" = []))
 )]
 #[instrument(skip(auth, site), fields(project_module = "Security"))]
@@ -540,7 +587,7 @@ pub async fn get_oauth2_settings(
     put,
     path = "/oauth2",
     tag = "security",
-    request_body = OAuth2Settings,
+    request_body = OAuth2SettingsRequest,
     responses((status = 204, description = "OAuth2 configuration updated")),
     security(("session" = []))
 )]
@@ -636,4 +683,31 @@ pub async fn update_password_rules(
     }
 
     Ok(ResponseBuilder::no_content().empty())
+}
+
+fn merge_generic_settings(
+    current: Option<&OAuth2Settings>,
+    request: Option<Vec<GenericProviderRequest>>,
+) -> Result<Vec<OAuth2GenericConfig>, String> {
+    let Some(request) = request else {
+        return Ok(current.map(|cfg| cfg.providers.clone()).unwrap_or_default());
+    };
+    request
+        .into_iter()
+        .map(|req| {
+            let mut config = req.config;
+            config.client_secret = match req.client_secret {
+                Some(secret) if secret.trim().is_empty() => {
+                    return Err("OIDC client secret cannot be empty".into());
+                }
+                Some(secret) => secret,
+                None => current
+                    .and_then(|cfg| cfg.providers.iter().find(|old| old.id == config.id))
+                    .map(|old| old.client_secret.clone())
+                    .unwrap_or_default(),
+            };
+            config.validate()?;
+            Ok(config)
+        })
+        .collect()
 }
