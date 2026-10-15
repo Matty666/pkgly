@@ -22,7 +22,7 @@ use nr_core::{
     repository::{Visibility, config::RepositoryConfigType},
     user::permissions::RepositoryActions,
 };
-use nr_storage::DynStorage;
+use nr_storage::{DynStorage, Storage};
 use parking_lot::RwLock;
 use tracing::warn;
 use uuid::Uuid;
@@ -50,7 +50,8 @@ use crate::{
 
 use super::{
     PythonRepository, PythonRepositoryConfig, PythonRepositoryConfigType, PythonRepositoryError,
-    utils::{html_escape, normalize_package_name},
+    VirtualRepositoryBasePath,
+    utils::{html_escape, normalize_package_name, redirect_to_trailing_slash},
 };
 
 mod simple_index;
@@ -184,6 +185,14 @@ impl PythonVirtualRepository {
 
     fn current_members(&self) -> Vec<ResolvedVirtualMember> {
         self.0.members.read().clone()
+    }
+
+    fn canonical_repository_base(&self) -> String {
+        format!(
+            "/repositories/{}/{}",
+            self.0.storage.storage_config().storage_config.storage_name,
+            self.0.name
+        )
     }
 
     fn update_resolution_settings(&self, config: &VirtualRepositoryConfig) {
@@ -328,7 +337,10 @@ impl PythonVirtualRepository {
         let uri_path = request.parts.uri.path();
         if let Some(simple_request) = SimpleRequest::try_from_request(&request.path, uri_path) {
             if simple_request.redirect_needed {
-                return Ok(RepoResponse::Other(redirect_to_trailing_slash(uri_path)));
+                return Ok(RepoResponse::Other(redirect_to_trailing_slash(
+                    &self.canonical_repository_base(),
+                    &request.path,
+                )));
             }
 
             match simple_request.kind {
@@ -433,8 +445,12 @@ impl PythonVirtualRepository {
                 self.site().repository_metrics.clone(),
             );
 
+            let mut member_parts = clone_parts(&request.parts);
+            member_parts
+                .extensions
+                .insert(VirtualRepositoryBasePath(self.canonical_repository_base()));
             let member_request = RepositoryRequest {
-                parts: clone_parts(&request.parts),
+                parts: member_parts,
                 body: RepositoryRequestBody::empty(),
                 path: request.path.clone(),
                 authentication: request
@@ -493,7 +509,9 @@ impl PythonVirtualRepository {
             return Ok(response_html(method, body));
         }
 
-        let body = build_simple_index_html(package_component, merged).into_bytes();
+        let body =
+            build_simple_index_html(package_component, &self.canonical_repository_base(), merged)
+                .into_bytes();
         self.0.simple_cache.write().put(cache_key, body.clone());
         Ok(response_html(method, body))
     }
@@ -793,21 +811,6 @@ async fn list_projects_for_repository(
         .fetch_all(database)
         .await?;
     Ok(projects)
-}
-
-fn redirect_to_trailing_slash(uri_path: &str) -> axum::response::Response {
-    let location = if uri_path.is_empty() {
-        String::from("/")
-    } else if uri_path.ends_with('/') {
-        uri_path.to_string()
-    } else {
-        format!("{}/", uri_path)
-    };
-
-    ResponseBuilder::default()
-        .status(StatusCode::MOVED_PERMANENTLY)
-        .header(http::header::LOCATION, location)
-        .empty()
 }
 
 #[derive(Debug, Clone)]

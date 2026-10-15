@@ -1,7 +1,7 @@
 use std::sync::{Arc, LazyLock};
 
 use chrono::Utc;
-use http::StatusCode;
+use http::{StatusCode, request::Parts};
 use nr_core::{
     database::entities::repository::{DBRepository, DBRepositoryConfig},
     repository::{
@@ -21,7 +21,7 @@ use url::Url;
 use uuid::Uuid;
 
 use super::{
-    PythonRepositoryError,
+    PythonRepositoryError, VirtualRepositoryBasePath,
     configs::{PythonProxyConfig, PythonProxyRoute, PythonRepositoryConfigType},
     utils::normalize_package_name,
 };
@@ -416,10 +416,8 @@ impl Repository for PythonProxy {
                 return Ok(RepoResponse::unauthorized());
             }
 
-            let uri_path = request.parts.uri.path().to_string();
+            let base_path = request_repository_base(&request.parts, this.base_repository_path());
             let path = request.path;
-            let base_path = derive_request_base_path(&uri_path, &path)
-                .unwrap_or_else(|| this.base_repository_path());
 
             if path.is_directory() {
                 if let Some(response) = this
@@ -494,10 +492,8 @@ impl Repository for PythonProxy {
                 return Ok(RepoResponse::unauthorized());
             }
 
-            let uri_path = request.parts.uri.path().to_string();
+            let base_path = request_repository_base(&request.parts, this.base_repository_path());
             let path = request.path;
-            let base_path = derive_request_base_path(&uri_path, &path)
-                .unwrap_or_else(|| this.base_repository_path());
 
             if path.is_directory() {
                 if let Some(response) = this
@@ -772,19 +768,11 @@ fn normalize_base_path(base_path: &str) -> String {
     }
 }
 
-fn derive_request_base_path(uri_path: &str, path: &StoragePath) -> Option<String> {
-    let uri_trimmed = uri_path.trim_end_matches('/');
-    let storage = path.to_string();
-    let storage_trimmed = storage.trim_end_matches('/');
-    if storage_trimmed.is_empty() {
-        return Some(uri_trimmed.to_string());
-    }
-    let suffix = format!("/{}", storage_trimmed);
-    let base = uri_trimmed.strip_suffix(&suffix)?;
-    if base.is_empty() {
-        return Some("/".to_string());
-    }
-    Some(base.to_string())
+fn request_repository_base(parts: &Parts, proxy_repository_base: String) -> String {
+    parts
+        .extensions
+        .get::<VirtualRepositoryBasePath>()
+        .map_or(proxy_repository_base, |base| base.0.clone())
 }
 
 fn resolve_upstream_link(original: &str, upstream_base: &Url) -> Option<Url> {

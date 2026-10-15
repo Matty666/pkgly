@@ -41,11 +41,121 @@ fn normalize_routes_retains_existing_entries() {
 }
 
 #[test]
-fn derive_request_base_path_strips_request_path_suffix() {
-    let uri_path = "/repositories/storage/python-proxy/simple/pkg/";
-    let storage_path = StoragePath::from("simple/pkg/");
-    let base = derive_request_base_path(uri_path, &storage_path).expect("base path");
-    assert_eq!(base, "/repositories/storage/python-proxy");
+fn request_repository_base_uses_virtual_context_independent_of_uri() {
+    for repository in ["test-storage/python-virtual", "TEST-STORAGE/Python-Virtual"] {
+        for package in ["demo", "demo/", "d%65mo", "d%65mo/"] {
+            for route_prefix in ["/repositories", "/storages", ""] {
+                let uri = format!("{route_prefix}/{repository}/simple/{package}");
+                let (mut parts, ()) = http::Request::get(&uri)
+                    .body(())
+                    .expect("request")
+                    .into_parts();
+                parts.extensions.insert(VirtualRepositoryBasePath(
+                    "/repositories/test-storage/python-virtual".to_string(),
+                ));
+
+                assert_eq!(
+                    request_repository_base(
+                        &parts,
+                        "/repositories/test-storage/python-proxy".to_string()
+                    ),
+                    "/repositories/test-storage/python-virtual",
+                    "virtual repository base for {uri}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn request_repository_base_uses_proxy_identity_without_virtual_context() {
+    for repository in ["test-storage/python-proxy", "TEST-STORAGE/Python-Proxy"] {
+        for package in ["demo", "demo/", "d%65mo", "d%65mo/"] {
+            for route_prefix in ["/repositories", "/storages", ""] {
+                let uri = format!("{route_prefix}/{repository}/simple/{package}");
+                let (parts, ()) = http::Request::get(&uri)
+                    .body(())
+                    .expect("request")
+                    .into_parts();
+
+                assert_eq!(
+                    request_repository_base(
+                        &parts,
+                        "/repositories/test-storage/python-proxy".to_string()
+                    ),
+                    "/repositories/test-storage/python-proxy",
+                    "proxy repository base for {uri}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn rewrite_simple_html_uses_virtual_repository_base() {
+    let upstream = Url::parse("https://files.pythonhosted.org/packages/demo/demo-1.0.whl")
+        .expect("upstream url");
+
+    let html = rewrite_simple_html(
+        br#"<a href="https://files.pythonhosted.org/packages/demo/demo-1.0.whl?download=1#sha256=abc">demo</a>"#,
+        "/repositories/test-storage/python-virtual",
+        &upstream,
+    )
+    .expect("valid html");
+
+    assert_eq!(
+        std::str::from_utf8(&html).expect("rewritten html"),
+        r#"<a href="/repositories/test-storage/python-virtual/packages/demo/demo-1.0.whl?download=1#sha256=abc">demo</a>"#
+    );
+}
+
+#[test]
+fn rewrite_simple_html_uses_proxy_repository_base() {
+    let upstream = Url::parse("https://files.pythonhosted.org/packages/demo/demo-1.0.whl")
+        .expect("upstream url");
+
+    let html = rewrite_simple_html(
+        br#"<a href="https://files.pythonhosted.org/packages/demo/demo-1.0.whl?download=1#sha256=def">demo</a>"#,
+        "/repositories/test-storage/python-proxy",
+        &upstream,
+    )
+    .expect("valid html");
+
+    assert_eq!(
+        std::str::from_utf8(&html).expect("rewritten html"),
+        r#"<a href="/repositories/test-storage/python-proxy/packages/demo/demo-1.0.whl?download=1#sha256=def">demo</a>"#
+    );
+}
+
+#[test]
+fn rewrite_simple_html_handles_encoded_and_plain_upstream_link_forms() {
+    let upstream = Url::parse("https://pypi.org/simple/demo/").expect("upstream url");
+
+    for repository_base in [
+        "/repositories/test-storage/python-proxy",
+        "/repositories/test-storage/python-virtual",
+    ] {
+        for artifact in [
+            "demo.whl?download=1#sha256=abc",
+            "d%65mo.whl?download=a%2Fb#sha256=abc",
+        ] {
+            for href in [
+                format!("../../packages/{artifact}"),
+                format!("/packages/{artifact}"),
+                format!("https://pypi.org/packages/{artifact}"),
+            ] {
+                let source = format!("<a href=\"{href}\">demo</a>");
+                let rewritten = rewrite_simple_html(source.as_bytes(), repository_base, &upstream)
+                    .expect("valid html");
+
+                assert_eq!(
+                    std::str::from_utf8(&rewritten).expect("rewritten html"),
+                    format!("<a href=\"{repository_base}/packages/{artifact}\">demo</a>"),
+                    "upstream link {href} with repository base {repository_base}"
+                );
+            }
+        }
+    }
 }
 
 fn metadata_path() -> StoragePath {
