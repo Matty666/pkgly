@@ -29,6 +29,14 @@ Packages with only prereleases have no inferred `latest` tag.
 Old publish tags cannot be recovered because earlier Pkgly versions discarded them.
 Use `npm dist-tag add` to restore those tags.
 
+### Database upgrades
+
+The upgrade adds `projects.npm_dist_tags` as a nullable JSON column.
+It preserves existing package versions and metadata. Startup applies upgrade migrations only.
+Rollback files run only when an operator requests a rollback.
+An explicit rollback removes the tag column and loses tags written after the upgrade.
+Package versions and metadata remain intact.
+
 ## Logging in
 
 When you run `npm adduser` it will first send a request to `{registry_url}/-/v1/login`

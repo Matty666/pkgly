@@ -77,3 +77,5 @@ fn tag_route_can_address_a_tag_named_dist_tags() {
         Some(("my-lib".into(), Some("dist-tags".into())))
     );
 }
+
+mod migration;
