@@ -698,6 +698,9 @@ else
     fail "Virtual repo failed to proxy lodash"
 fi
 
+# Route, casing, and permission regressions share this suite's package fixtures.
+source "${SCRIPT_DIR}/npm_regressions.sh"
+
 # Test 16: Authentication required for publish
 print_test "Verify authentication required for publish"
 cd "$WORKSPACE/hello-pkg"

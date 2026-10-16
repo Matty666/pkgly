@@ -23,7 +23,7 @@ fn tagged_prerelease_does_not_request_latest() {
 }
 
 #[test]
-fn default_and_explicit_latest_follow_npm() {
+fn empty_tags_default_to_latest_and_explicit_latest_accepts_prereleases() {
     for version in ["1.0.0", "2.0.0-beta.1"] {
         let tags = publish_tags(HashMap::default(), version).unwrap();
         assert_eq!(tags.get("latest").map(String::as_str), Some(version));
@@ -78,4 +78,22 @@ fn tag_route_can_address_a_tag_named_dist_tags() {
     );
 }
 
+mod concurrency;
 mod migration;
+
+#[test]
+fn npm_compatible_tag_punctuation_is_accepted() {
+    for tag in ["release!", "release(candidate)", "release'candidate"] {
+        assert!(valid_tag(tag), "{tag}");
+    }
+}
+
+#[test]
+fn tag_routes_preserve_case() {
+    for tag in ["Beta", "beta"] {
+        assert_eq!(
+            parse_tag_path(&format!("-/package/@scope/my-lib/dist-tags/{tag}")),
+            Some(("@scope/my-lib".into(), Some(tag.into())))
+        );
+    }
+}

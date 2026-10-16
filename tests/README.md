@@ -20,6 +20,7 @@ tests/
 │   ├── common.sh                   # Shared utilities and functions
 │   ├── test_maven.sh               # Maven integration tests
 │   ├── test_npm.sh                 # NPM integration tests
+│   ├── npm_regressions.sh          # NPM route, casing, and permission regressions
 │   ├── test_docker.sh              # Docker integration tests
 │   ├── test_python.sh              # Python/PyPI integration tests
 │   ├── test_python_virtual.sh      # Python virtual repository integration tests
@@ -47,7 +48,7 @@ tests/
 | Package Type | Hosted | Proxy | Tests |
 |-------------|--------|-------|-------|
 | Maven       | ✅     | ✅    | 12    |
-| NPM         | ✅     | ✅    | 18    |
+| NPM         | ✅     | ✅    | 95    |
 | Docker      | ⚠️     | ✅    | 8     |
 | Python      | ✅     | ✅    | 11    |
 | Python (Virtual) | ✅ | ✅ | 10 |
@@ -176,26 +177,31 @@ All containers communicate on the `test-network` bridge network. Tests run insid
 11. ✅ Proxy caching verification
 12. ✅ Authentication and error handling
 
-### NPM Tests (18 tests)
+### NPM Tests
 
-1. ✅ Create NPM package tarball
-2. ✅ Publish package to hosted repository
-3. ✅ Fetch package metadata
-4. ✅ Install package from hosted repository
-5. ✅ Verify installed package functionality
-6. ✅ Publish second version
-7. ✅ Verify both versions in metadata
-8. ✅ Install specific version
-9. ✅ Install latest version
-10. ✅ Proxy package from npmjs.org
-11. ✅ Proxy caching verification
-12. ✅ Yarn Classic scoped-package proxy install
-13. ✅ Configure npm virtual repository members
-14. ✅ Install hosted package through npm virtual repository
-15. ✅ Install proxied package through npm virtual repository
-16. ✅ Authentication required for publish
-17. ✅ 404 for non-existent package
-18. ✅ Scoped package support
+The npm suite uses native npm and Yarn commands, plus direct HTTP requests for inputs that the clients reject or do not send.
+It covers publication, installation, README and manifest metadata, distribution tags, deprecation, proxy caching, and virtual repositories.
+Route regressions cover scoped names, encoded slashes, case-sensitive tags and prereleases, mixed-case registry names, and malformed paths.
+Permission checks use a read-only token and confirm that rejected writes leave metadata unchanged.
+`npm_regressions.sh` runs as part of `test_npm.sh` and uses its fixtures and result counters.
+
+#### Concurrent tag updates
+
+Run the PostgreSQL concurrency tests with:
+
+```sh
+cargo test -q -p pkgly repository::npm::tags::tests::concurrency
+```
+
+Each test uses separate database connections for two writers.
+A third connection holds a row lock on the package before either write starts.
+The test checks `pg_stat_activity` until both writers wait for a database lock, then releases the held lock.
+This forces overlapping writes without relying on an arbitrary delay.
+Timeouts turn blocked or stalled tests into failures.
+
+The cases cover two tag additions, initialization of legacy tag storage, removal during another addition, and two writes to the same tag.
+They assert the complete final tag map, including preservation of `latest` and removal of the deleted tag.
+The database suite also checks that case-distinct prerelease cache paths do not collide in the proxy catalog.
 
 ### Docker Tests (8 tests)
 

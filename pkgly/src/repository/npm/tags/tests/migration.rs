@@ -12,7 +12,7 @@ use crate::test_support::DB_TEST_LOCK;
 use nr_core::database::migration::run_migrations;
 
 const TAG_MIGRATION: i64 = 20261016120000;
-const PROJECT: Uuid = Uuid::from_u128(3);
+pub(super) const PROJECT: Uuid = Uuid::from_u128(3);
 const PRERELEASE_ONLY_PROJECT: Uuid = Uuid::from_u128(4);
 static MIGRATOR: Migrator = sqlx::migrate!("../crates/core/migrations");
 
@@ -100,7 +100,7 @@ async fn rollback_removes_only_tag_storage_and_reupgrade_preserves_packages() {
     );
 }
 
-async fn previous_database(docker: &Cli) -> (Container<'_, GenericImage>, PgPool) {
+pub(super) async fn previous_database(docker: &Cli) -> (Container<'_, GenericImage>, PgPool) {
     let image = GenericImage::new("postgres", "18-alpine")
         .with_env_var("POSTGRES_PASSWORD", "password")
         .with_env_var("POSTGRES_USER", "postgres")

@@ -454,3 +454,51 @@ fn prerelease_cache_index_keeps_the_complete_version() {
     assert_eq!(key.package_key, "@scope/my-lib");
     assert_eq!(key.version.as_deref(), Some("1.2.3-beta.1+build.4"));
 }
+
+#[test]
+fn percent_escape_case_keeps_the_same_registry_base() {
+    for path in [
+        "/Store/Npm/@scope%2fpkg",
+        "/Store/Npm/@scope%2Fpkg",
+        "/Store/Npm/@scope/pkg",
+    ] {
+        assert_eq!(
+            super::repository_base_path(path, &StoragePath::from("@scope/pkg")),
+            Some("/repositories/Store/Npm".into())
+        );
+    }
+}
+
+#[tokio::test]
+async fn metadata_tarballs_preserve_https_behind_a_reverse_proxy() {
+    let (parts, _) = Request::builder()
+        .uri("/repositories/store/npm/demo")
+        .header(http::header::HOST, "registry.test")
+        .header("x-forwarded-proto", "https")
+        .body(())
+        .unwrap()
+        .into_parts();
+    let body = r#"{"versions":{"1.0.0":{"dist":{"tarball":"https://registry.npmjs.org/demo/-/demo-1.0.0.tgz"}}}}"#;
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("metadata.json");
+    std::fs::write(&file_path, body).unwrap();
+    let file = StorageFile::File {
+        meta: nr_storage::StorageFileMeta::read_from_file(&file_path).unwrap(),
+        content: nr_storage::StorageFileReader::Bytes(nr_storage::FileContentBytes::Bytes(
+            Bytes::from_static(body.as_bytes()),
+        )),
+    };
+    let response = super::rewrite_metadata_tarballs(&parts, &StoragePath::from("demo"), file)
+        .await
+        .unwrap()
+        .unwrap();
+    let RepoResponse::Other(response) = response else {
+        panic!("expected metadata")
+    };
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        value["versions"]["1.0.0"]["dist"]["tarball"],
+        "https://registry.test/repositories/store/npm/demo/-/demo-1.0.0.tgz"
+    );
+}

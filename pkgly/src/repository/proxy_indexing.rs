@@ -221,3 +221,6 @@ impl crate::utils::IntoErrorResponse for ProxyIndexingError {
         ResponseBuilder::internal_server_error().body(format!("Proxy indexing error: {}", self))
     }
 }
+
+#[cfg(test)]
+mod tests;
