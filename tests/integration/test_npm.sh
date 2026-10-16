@@ -192,6 +192,117 @@ else
     fail "Failed to install latest version"
 fi
 
+# Prerelease and distribution tag regressions use the native npm client.
+print_test "Publish prerelease with beta tag and preserve latest"
+cd "$WORKSPACE/hello-pkg"
+PRERELEASE="2.0.0-beta.1"
+jq --arg version "$PRERELEASE" '.version = $version' package.json > package.json.tmp
+mv package.json.tmp package.json
+if run_cmd npm publish --tag beta; then
+    METADATA=$(curl -sf "${PKGLY_URL}${METADATA_PATH}" || echo '{}')
+    if jq -e --arg stable "$VERSION_2" --arg beta "$PRERELEASE" \
+        '.["dist-tags"].latest == $stable and .["dist-tags"].beta == $beta' <<<"$METADATA" > /dev/null; then
+        pass
+    else
+        fail "Publishing beta changed latest or lost the beta tag"
+    fi
+else
+    fail "Failed to publish prerelease"
+fi
+
+for SPEC in "$PRERELEASE" beta latest; do
+    print_test "Install scoped package at ${SPEC} with a fresh npm cache"
+    cd "$INSTALL_DIR_LATEST"
+    EXPECTED="$PRERELEASE"
+    if [ "$SPEC" = latest ]; then EXPECTED="$VERSION_2"; fi
+    if run_cmd npm install "${PACKAGE_NAME}@${SPEC}" --cache "$WORKSPACE/cache-${SPEC}" && \
+       [ "$(jq -r .version node_modules/@pkgly-test/hello-pkg/package.json)" = "$EXPECTED" ]; then
+        pass
+    else
+        fail "Failed to install expected version for ${SPEC}"
+    fi
+done
+
+print_test "npm dist-tag list returns beta and latest"
+cd "$WORKSPACE/hello-pkg"
+if run_cmd npm dist-tag ls "$PACKAGE_NAME"; then pass; else fail "Cannot list distribution tags"; fi
+
+print_test "Promote prerelease to latest with npm dist-tag"
+if run_cmd npm dist-tag add "${PACKAGE_NAME}@${PRERELEASE}" latest && \
+   [ "$(npm view "${PACKAGE_NAME}@latest" version)" = "$PRERELEASE" ]; then
+    pass
+else
+    fail "Cannot promote beta to latest"
+fi
+
+print_test "Restore stable latest and remove beta tag"
+if run_cmd npm dist-tag add "${PACKAGE_NAME}@${VERSION_2}" latest && \
+   run_cmd npm dist-tag rm "$PACKAGE_NAME" beta; then
+    METADATA=$(curl -sf "${PKGLY_URL}${METADATA_PATH}" || echo '{}')
+    if jq -e --arg stable "$VERSION_2" \
+        '.["dist-tags"].latest == $stable and (.["dist-tags"] | has("beta") | not)' <<<"$METADATA" > /dev/null; then
+        pass
+    else
+        fail "Tag removal or stable latest restoration failed"
+    fi
+else
+    fail "Cannot restore latest or remove beta tag"
+fi
+
+print_test "First prerelease under next does not create latest"
+UNSCOPED_NAME="pkgly-prerelease-test"
+jq --arg name "$UNSCOPED_NAME" '.name = $name | .version = "1.0.0-rc-test.2"' package.json > package.json.tmp
+mv package.json.tmp package.json
+if run_cmd npm publish --tag next; then
+    METADATA_UNSCOPED=$(curl -sf "${PKGLY_URL}/repositories/${NPM_HOSTED_REPO}/${UNSCOPED_NAME}" || echo '{}')
+    if jq -e '.["dist-tags"].next == "1.0.0-rc-test.2" and (.["dist-tags"] | has("latest") | not)' <<<"$METADATA_UNSCOPED" > /dev/null; then
+        pass
+    else
+        fail "First next publish created latest or lost next"
+    fi
+else
+    fail "Failed to publish first prerelease"
+fi
+
+print_test "Install unscoped prerelease with hyphens in its name and version"
+cd "$INSTALL_DIR_LATEST"
+if run_cmd npm install "${UNSCOPED_NAME}@next" --cache "$WORKSPACE/cache-unscoped" && \
+   [ "$(jq -r .version "node_modules/${UNSCOPED_NAME}/package.json")" = "1.0.0-rc-test.2" ]; then
+    pass
+else
+    fail "Failed to retrieve unscoped prerelease"
+fi
+
+print_test "Explicit latest tag can select a prerelease"
+cd "$WORKSPACE/hello-pkg"
+jq '.version = "1.0.0-rc-test.3"' package.json > package.json.tmp
+mv package.json.tmp package.json
+if run_cmd npm publish --tag latest && \
+   [ "$(npm view "${UNSCOPED_NAME}@latest" version)" = "1.0.0-rc-test.3" ]; then
+    pass
+else
+    fail "Explicit latest tag did not select the prerelease"
+fi
+
+print_test "Stable publish under next preserves the explicit latest tag"
+jq '.version = "1.0.0"' package.json > package.json.tmp
+mv package.json.tmp package.json
+if run_cmd npm publish --tag next; then
+    METADATA_UNSCOPED=$(curl -sf "${PKGLY_URL}/repositories/${NPM_HOSTED_REPO}/${UNSCOPED_NAME}" || echo '{}')
+    if jq -e '.["dist-tags"].next == "1.0.0" and .["dist-tags"].latest == "1.0.0-rc-test.3"' <<<"$METADATA_UNSCOPED" > /dev/null; then
+        pass
+    else
+        fail "Stable next publish changed latest"
+    fi
+else
+    fail "Stable next publish failed"
+fi
+
+# Restore the fixture identity for subsequent tests.
+cd "$WORKSPACE/hello-pkg"
+jq --arg name "$PACKAGE_NAME" --arg version "$VERSION_2" '.name = $name | .version = $version' package.json > package.json.tmp
+mv package.json.tmp package.json
+
 # Test 10: Proxy repository - fetch from npmjs.org
 print_test "Proxy: fetch lodash from npmjs.org"
 PROXY_INSTALL_DIR="$WORKSPACE/proxy-test"
@@ -393,6 +504,7 @@ fi
 
 # Test 18: NPM scoped package support
 print_test "Verify scoped package support"
+METADATA=$(curl -sf "${PKGLY_URL}${METADATA_PATH}" || echo "")
 record_output "$METADATA"
 set +e
 jq -e '.name | startswith("@")' <<<"$METADATA" > /dev/null 2>&1

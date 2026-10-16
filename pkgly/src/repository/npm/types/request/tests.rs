@@ -48,3 +48,72 @@ pub fn tests() {
         assert_eq!(get_path, expected);
     }
 }
+
+#[test]
+fn prerelease_tarball_paths_keep_the_complete_version() {
+    for (path, name, file) in [
+        (
+            "my-lib/-/my-lib-1.2.3-beta.1.tgz",
+            "my-lib",
+            "my-lib-1.2.3-beta.1.tgz",
+        ),
+        (
+            "@scope/my-lib/-/my-lib-1.2.3-beta.1.tgz",
+            "@scope/my-lib",
+            "my-lib-1.2.3-beta.1.tgz",
+        ),
+        (
+            "@scope/my-lib/-/@scope/my-lib-1.2.3-beta.1.tgz",
+            "@scope/my-lib",
+            "my-lib-1.2.3-beta.1.tgz",
+        ),
+    ] {
+        assert_eq!(
+            GetPath::try_from(StoragePath::from(path)).unwrap(),
+            GetPath::GetTar {
+                name: name.into(),
+                version: "1.2.3-beta.1".into(),
+                file: file.into(),
+            }
+        );
+    }
+}
+
+#[test]
+fn tarball_version_parser_handles_prereleases_and_build_metadata() {
+    for version in [
+        "1.2.3",
+        "1.2.3-beta.1",
+        "1.2.3-rc-test.2+build.4",
+        "1.2.3-20261016",
+    ] {
+        let path = StoragePath::from(format!("my-lib/-/my-lib-{version}.tgz"));
+        let GetPath::GetTar {
+            version: actual, ..
+        } = GetPath::try_from(path).unwrap()
+        else {
+            panic!("expected tarball");
+        };
+        assert_eq!(actual, version);
+    }
+    for file in [
+        "my-lib.tgz",
+        "my-lib-beta.1.tgz",
+        "my-lib-1.2.3.zip",
+        "my-lib-1.2.3.tgz.tgz",
+    ] {
+        assert!(
+            GetPath::try_from(StoragePath::from(format!("my-lib/-/{file}"))).is_err(),
+            "{file}"
+        );
+    }
+}
+
+#[test]
+fn version_like_package_name_does_not_change_the_tarball_version() {
+    let path = StoragePath::from("lib-1.0.0/-/lib-1.0.0-2.0.0-beta.1.tgz");
+    let GetPath::GetTar { version, .. } = GetPath::try_from(path).unwrap() else {
+        panic!("expected tarball");
+    };
+    assert_eq!(version, "2.0.0-beta.1");
+}

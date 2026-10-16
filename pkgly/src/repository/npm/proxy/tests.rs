@@ -446,3 +446,11 @@ impl ProxyIndexing for RecordingIndexer {
         Ok(())
     }
 }
+
+#[test]
+fn prerelease_cache_index_keeps_the_complete_version() {
+    let path = StoragePath::from("packages/@scope/my-lib/my-lib-1.2.3-beta.1+build.4.tgz");
+    let key = super::npm_proxy_key_from_cache_path(&path).expect("prerelease cache key");
+    assert_eq!(key.package_key, "@scope/my-lib");
+    assert_eq!(key.version.as_deref(), Some("1.2.3-beta.1+build.4"));
+}
