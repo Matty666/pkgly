@@ -18,6 +18,7 @@ use types::InvalidNPMPackageName;
 
 pub mod hosted;
 pub mod login;
+mod metadata;
 pub mod proxy;
 mod tags;
 pub mod types;
@@ -67,6 +68,8 @@ pub enum NPMRegistryError {
     InvalidGetRequest,
     #[error("Invalid npm distribution tags")]
     InvalidDistTags,
+    #[error("Invalid npm metadata update")]
+    InvalidMetadataUpdate,
     #[error("Version not found")]
     VersionNotFound,
     #[error("Invalid Package Attachment. Error: {0}")]

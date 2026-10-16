@@ -9,8 +9,13 @@ npm install my-package@1.2.0-beta.1
 ```
 
 Pkgly stores the `dist-tags` from each publish request. A publish changes only the supplied tags.
-The default npm tag is `latest`, including when a client explicitly publishes a prerelease with that tag.
+If `dist-tags` is missing or an empty object, Pkgly defaults to `latest`, including for prerelease versions.
+An explicit `beta` tag changes only `beta`. An explicit `latest` tag can point to a prerelease.
 Pkgly does not infer a tag from a prerelease suffix.
+
+The [npm 11+ CLI](https://github.com/npm/cli/blob/latest/lib/commands/publish.js) normally rejects prerelease publication without an explicit tag.
+[Bun](https://github.com/oven-sh/bun/blob/main/src/runtime/cli/publish_command.rs) defaults to `latest` and sends that tag in the publish request.
+The server cannot distinguish that default from an intentional `--tag latest`.
 
 Use npm to manage tags after publication:
 
@@ -37,38 +42,31 @@ Rollback files run only when an operator requests a rollback.
 An explicit rollback removes the tag column and loses tags written after the upgrade.
 Package versions and metadata remain intact.
 
+## README and package metadata
+
+Keep `README.md` in the package root, beside `package.json`.
+Publish a new version to update the README, description, or other manifest fields.
+Pkgly returns public package metadata from `latest`, or from the most recent publication when that tag is absent.
+Each published version keeps its own metadata.
+
+Use `npm deprecate` to change deprecation messages without a new publication:
+
+```sh
+npm deprecate 'my-package@1.x' 'Use version 2 instead'
+npm deprecate 'my-package@1.x' ''
+```
+
+An empty message removes the warning.
+See the [HTTP routes](routes.md) for supported operations and limits.
+
 ## Logging in
 
-When you run `npm adduser` it will first send a request to `{registry_url}/-/v1/login`
-if this path resolves it should return a web login response. However, this feature is not documented here or implemented in Pkgly so this returns a bad request.
+Use an existing Pkgly account with legacy npm login:
 
-So if that requests returns a bad request. It will attempt to do a couch db login. 
-
-
-### Couch DB Login
-
-Which is at route PUT `-/user/org.couchdb.user:{SOME_USER}`
-
-SOME_USER being the username.
-
-The body will be `application/json` with
-```json
-{
-    "name": "Username",
-    "password": "Password",
-    "email": "Email",
-    "login_type": "user",
-    "roles": [],
-    "date": "CURRENT_ISO_8601_TIMESTAMP"
-}
+```sh
+npm login --auth-type=legacy --registry="https://<host>/repositories/<storage>/<repository>/"
 ```
 
-You will now validate the login and return a token if successful.
-
-Response is `application/json` with
-```json
-{
-    "token": "TOKEN"
-}
-```
-NPM will save this to the config file and you will be logged in.
+The client sends credentials to `PUT -/user/org.couchdb.user:<username>` and saves the returned repository token.
+This endpoint authenticates an existing account. It does not create an account.
+Web login is not implemented.

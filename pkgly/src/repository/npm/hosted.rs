@@ -14,6 +14,7 @@ use nr_storage::{DynStorage, FileContent, Storage};
 use tracing::{debug, info, instrument, warn};
 
 use super::{
+    metadata::{deprecation_updates, normalize_readme, package_fields, save_deprecations},
     tags::{load_tags, parse_tag_path, publish_tags, remove_tag, save_tags},
     types::{
         NPM_COMMAND_HEADER, NpmRegistryPackageResponse,
@@ -78,15 +79,16 @@ impl NPMHostedRegistry {
             attachments,
             versions,
             dist_tags,
-            other: _,
+            other,
         }: PublishRequest = serde_json::from_str(&body)?;
         if versions.len() != 1 {
             return Err(NPMRegistryError::OnlyOneReleaseOrAttachmentAtATime);
         }
-        let (version, data) = versions
+        let (version, mut data) = versions
             .into_iter()
             .next()
             .ok_or(NPMRegistryError::VersionNotFound)?;
+        normalize_readme(&mut data, &other);
         let dist_tags = publish_tags(dist_tags, &version)?;
         if version != data.version {
             return Err(NPMRegistryError::InvalidDistTags);
@@ -139,6 +141,25 @@ impl NPMHostedRegistry {
             warn!(error = %err, "Failed to enqueue npm publish webhook");
         }
 
+        Ok(ResponseBuilder::no_content().empty().into())
+    }
+    async fn handle_deprecate(
+        &self,
+        request: RepositoryRequest,
+    ) -> Result<RepoResponse, NPMRegistryError> {
+        let GetPath::GetPackageInfo { name } = GetPath::try_from(request.path.clone())? else {
+            return Err(NPMRegistryError::InvalidMetadataUpdate);
+        };
+        let body = request.body.body_as_string().await?;
+        let body =
+            serde_json::from_str(&body).map_err(|_| NPMRegistryError::InvalidMetadataUpdate)?;
+        let updates = deprecation_updates(&body, &name)?;
+        let Some(project) = self.get_project_from_key(&name).await? else {
+            return Ok(ResponseBuilder::not_found().empty().into());
+        };
+        if !save_deprecations(project.id, updates, &self.site.database).await? {
+            return Ok(ResponseBuilder::not_found().empty().into());
+        }
         Ok(ResponseBuilder::no_content().empty().into())
     }
     async fn set_dist_tag(
@@ -287,6 +308,7 @@ impl Repository for NPMHostedRegistry {
                     npm_time::format_date_time(&project.updated_at),
                 );
                 let mut versions_map = HashMap::new();
+                let mut newest_version = None;
                 for version in versions {
                     times.insert(
                         version.version.clone(),
@@ -301,15 +323,24 @@ impl Repository for NPMHostedRegistry {
                                 continue;
                             }
                         };
+                        if newest_version.is_none() {
+                            newest_version = Some(version.version.clone());
+                        }
                         versions_map.insert(version.version.clone(), extra);
                     } else {
                         warn!(?version, "Invalid NPM Project");
                     }
                 }
+                let metadata = package_fields(
+                    dist_tags
+                        .get("latest")
+                        .or(newest_version.as_ref())
+                        .and_then(|version| versions_map.get(version)),
+                );
                 let project_response = NpmRegistryPackageResponse {
                     id: project.key.clone(),
                     name: project.key.clone(),
-                    description: project.description.clone(),
+                    metadata,
                     dist_tags,
                     versions: versions_map,
                     time: times,
@@ -423,6 +454,7 @@ impl Repository for NPMHostedRegistry {
 
         match command_header {
             NPMCommand::Publish => self.handle_publish(request).await,
+            NPMCommand::Deprecate => self.handle_deprecate(request).await,
         }
     }
     async fn handle_delete(

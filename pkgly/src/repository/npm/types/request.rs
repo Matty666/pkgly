@@ -21,6 +21,8 @@ use crate::repository::{maven::get_release_type, npm::NPMRegistryError};
 pub enum NPMCommand {
     #[strum(serialize = "publish")]
     Publish,
+    #[strum(serialize = "deprecate", serialize = "undeprecate")]
+    Deprecate,
 }
 impl TryFrom<&HeaderValue> for NPMCommand {
     type Error = InvalidNPMCommand;
