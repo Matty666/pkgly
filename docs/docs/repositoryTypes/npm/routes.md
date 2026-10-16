@@ -187,21 +187,29 @@ curl -X PUT \
      "https://<host>/repositories/<storage>/<repository>/package/<package>/<version>/<package>-<version>.tgz?rev=<rev>"
 ```
 
-### Update Package Metadata
-Update package information (dist-tags, readme, etc.):
-```bash
+### Manage Distribution Tags
+
+Use these hosted registry endpoints to list, set, and remove tags:
+
+| Method | Path | Request body |
+| --- | --- | --- |
+| GET | `-/package/<name>/dist-tags` | None |
+| PUT | `-/package/<name>/dist-tags/<tag>` | A JSON string with an existing version |
+| DELETE | `-/package/<name>/dist-tags/<tag>` | None |
+
+For scoped packages, `<name>` includes the scope, such as `@scope/my-package`.
+Tag changes require repository write permission.
+Use `npm dist-tag` for these operations, or supply the version as a JSON string:
+
+```sh
 curl -X PUT \
      -H "Authorization: Bearer <token>" \
      -H "Content-Type: application/json" \
-     -d '{
-       "dist-tags": {
-         "latest": "1.1.0",
-         "beta": "1.2.0-beta.1"
-       },
-       "readme": "# Updated Readme\n\nNew description..."
-     }' \
-     "https://<host>/repositories/<storage>/<repository>/package/<package>?rev=<current_rev>"
+     -d '"1.2.0-beta.1"' \
+     "https://<host>/repositories/<storage>/<repository>/-/package/my-package/dist-tags/beta"
 ```
+
+A GET request to `<name>/<tag>` returns the version metadata for that tag.
 
 ### Unpublish Package Version
 Remove a specific version:

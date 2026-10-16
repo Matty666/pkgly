@@ -667,30 +667,13 @@ fn npm_package_components(path: &StoragePath) -> Option<(String, String)> {
     Some((package_name, file_name))
 }
 
-fn npm_version_from_filename(file_name: &str) -> Option<String> {
-    let stem = file_name.strip_suffix(".tgz")?;
-    let (_name_part, version_part) = stem.rsplit_once('-')?;
-    if version_part.is_empty() {
-        return None;
-    }
-    if !version_part
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_digit())
-        .unwrap_or(false)
-    {
-        return None;
-    }
-    Some(version_part.to_string())
-}
-
 pub(super) fn npm_proxy_meta_from_cache_path(
     path: &StoragePath,
     size: u64,
     upstream_url: Option<&Url>,
 ) -> Option<ProxyArtifactMeta> {
     let (package_name, file_name) = npm_package_components(path)?;
-    let version = npm_version_from_filename(&file_name)?;
+    let version = super::types::request::extract_version_from_file(&file_name, &package_name)?;
     let mut builder =
         ProxyArtifactMeta::builder(package_name.clone(), package_name.clone(), path.to_string())
             .version(version)
@@ -704,7 +687,7 @@ pub(super) fn npm_proxy_meta_from_cache_path(
 
 pub(super) fn npm_proxy_key_from_cache_path(path: &StoragePath) -> Option<ProxyArtifactKey> {
     let (package_name, file_name) = npm_package_components(path)?;
-    let version = npm_version_from_filename(&file_name)?;
+    let version = super::types::request::extract_version_from_file(&file_name, &package_name)?;
     Some(ProxyArtifactKey {
         package_key: package_name,
         version: Some(version),

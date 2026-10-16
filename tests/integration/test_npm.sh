@@ -66,7 +66,7 @@ print_test "Fetch package metadata"
 ENCODED_NAME=$(echo "$PACKAGE_NAME" | sed 's/@/%40/g; s/\//%2F/g')
 METADATA_PATH="/repositories/${NPM_HOSTED_REPO}/${ENCODED_NAME}"
 
-METADATA=$(curl -sf "${PKGLY_URL}${METADATA_PATH}" || echo "")
+METADATA=$(curl -sf -H "$(get_auth_header)" "${PKGLY_URL}${METADATA_PATH}" || echo "{}")
 record_output "$METADATA"
 
 set +e
@@ -131,7 +131,7 @@ fi
 
 # Test 7: Verify both versions exist
 print_test "Verify both versions accessible"
-METADATA=$(curl -sf "${PKGLY_URL}${METADATA_PATH}" || echo "")
+METADATA=$(curl -sf -H "$(get_auth_header)" "${PKGLY_URL}${METADATA_PATH}" || echo "{}")
 record_output "$METADATA"
 
 set +e
@@ -199,7 +199,7 @@ PRERELEASE="2.0.0-beta.1"
 jq --arg version "$PRERELEASE" '.version = $version' package.json > package.json.tmp
 mv package.json.tmp package.json
 if run_cmd npm publish --tag beta; then
-    METADATA=$(curl -sf "${PKGLY_URL}${METADATA_PATH}" || echo '{}')
+    METADATA=$(curl -sf -H "$(get_auth_header)" "${PKGLY_URL}${METADATA_PATH}" || echo '{}')
     if jq -e --arg stable "$VERSION_2" --arg beta "$PRERELEASE" \
         '.["dist-tags"].latest == $stable and .["dist-tags"].beta == $beta' <<<"$METADATA" > /dev/null; then
         pass
@@ -212,7 +212,10 @@ fi
 
 for SPEC in "$PRERELEASE" beta latest; do
     print_test "Install scoped package at ${SPEC} with a fresh npm cache"
-    cd "$INSTALL_DIR_LATEST"
+    SPEC_INSTALL_DIR="$WORKSPACE/install-prerelease-${SPEC}"
+    mkdir -p "$SPEC_INSTALL_DIR"
+    cp "$INSTALL_DIR_LATEST/.npmrc" "$SPEC_INSTALL_DIR/.npmrc"
+    cd "$SPEC_INSTALL_DIR"
     EXPECTED="$PRERELEASE"
     if [ "$SPEC" = latest ]; then EXPECTED="$VERSION_2"; fi
     if run_cmd npm install "${PACKAGE_NAME}@${SPEC}" --cache "$WORKSPACE/cache-${SPEC}" && \
@@ -225,7 +228,15 @@ done
 
 print_test "npm dist-tag list returns beta and latest"
 cd "$WORKSPACE/hello-pkg"
-if run_cmd npm dist-tag ls "$PACKAGE_NAME"; then pass; else fail "Cannot list distribution tags"; fi
+TAG_OUTPUT=$(npm dist-tag ls "$PACKAGE_NAME" 2>&1 || echo "")
+record_output "$TAG_OUTPUT"
+if grep -Fxq "beta: $PRERELEASE" <<<"$TAG_OUTPUT" && \
+   grep -Fxq "latest: $VERSION_2" <<<"$TAG_OUTPUT"; then
+    clear_last_log
+    pass
+else
+    fail "Distribution tags do not include beta and latest"
+fi
 
 print_test "Promote prerelease to latest with npm dist-tag"
 if run_cmd npm dist-tag add "${PACKAGE_NAME}@${PRERELEASE}" latest && \
@@ -238,7 +249,7 @@ fi
 print_test "Restore stable latest and remove beta tag"
 if run_cmd npm dist-tag add "${PACKAGE_NAME}@${VERSION_2}" latest && \
    run_cmd npm dist-tag rm "$PACKAGE_NAME" beta; then
-    METADATA=$(curl -sf "${PKGLY_URL}${METADATA_PATH}" || echo '{}')
+    METADATA=$(curl -sf -H "$(get_auth_header)" "${PKGLY_URL}${METADATA_PATH}" || echo '{}')
     if jq -e --arg stable "$VERSION_2" \
         '.["dist-tags"].latest == $stable and (.["dist-tags"] | has("beta") | not)' <<<"$METADATA" > /dev/null; then
         pass
@@ -254,7 +265,7 @@ UNSCOPED_NAME="pkgly-prerelease-test"
 jq --arg name "$UNSCOPED_NAME" '.name = $name | .version = "1.0.0-rc-test.2"' package.json > package.json.tmp
 mv package.json.tmp package.json
 if run_cmd npm publish --tag next; then
-    METADATA_UNSCOPED=$(curl -sf "${PKGLY_URL}/repositories/${NPM_HOSTED_REPO}/${UNSCOPED_NAME}" || echo '{}')
+    METADATA_UNSCOPED=$(curl -sf -H "$(get_auth_header)" "${PKGLY_URL}/repositories/${NPM_HOSTED_REPO}/${UNSCOPED_NAME}" || echo '{}')
     if jq -e '.["dist-tags"].next == "1.0.0-rc-test.2" and (.["dist-tags"] | has("latest") | not)' <<<"$METADATA_UNSCOPED" > /dev/null; then
         pass
     else
@@ -288,7 +299,7 @@ print_test "Stable publish under next preserves the explicit latest tag"
 jq '.version = "1.0.0"' package.json > package.json.tmp
 mv package.json.tmp package.json
 if run_cmd npm publish --tag next; then
-    METADATA_UNSCOPED=$(curl -sf "${PKGLY_URL}/repositories/${NPM_HOSTED_REPO}/${UNSCOPED_NAME}" || echo '{}')
+    METADATA_UNSCOPED=$(curl -sf -H "$(get_auth_header)" "${PKGLY_URL}/repositories/${NPM_HOSTED_REPO}/${UNSCOPED_NAME}" || echo '{}')
     if jq -e '.["dist-tags"].next == "1.0.0" and .["dist-tags"].latest == "1.0.0-rc-test.3"' <<<"$METADATA_UNSCOPED" > /dev/null; then
         pass
     else
@@ -504,7 +515,7 @@ fi
 
 # Test 18: NPM scoped package support
 print_test "Verify scoped package support"
-METADATA=$(curl -sf "${PKGLY_URL}${METADATA_PATH}" || echo "")
+METADATA=$(curl -sf -H "$(get_auth_header)" "${PKGLY_URL}${METADATA_PATH}" || echo "{}")
 record_output "$METADATA"
 set +e
 jq -e '.name | startswith("@")' <<<"$METADATA" > /dev/null 2>&1

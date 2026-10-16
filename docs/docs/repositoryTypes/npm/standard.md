@@ -1,5 +1,34 @@
 ## Publishing
 
+Use `npm publish --tag beta` to publish a prerelease without changing `latest`:
+
+```sh
+npm publish --tag beta
+npm install my-package@beta
+npm install my-package@1.2.0-beta.1
+```
+
+Pkgly stores the `dist-tags` from each publish request. A publish changes only the supplied tags.
+The default npm tag is `latest`, including when a client explicitly publishes a prerelease with that tag.
+Pkgly does not infer a tag from a prerelease suffix.
+
+Use npm to manage tags after publication:
+
+```sh
+npm dist-tag ls my-package
+npm dist-tag add my-package@1.2.0-beta.1 beta
+npm dist-tag add my-package@1.2.0 latest
+npm dist-tag rm my-package beta
+```
+
+Scoped packages use the same commands with names such as `@scope/my-package`.
+Exact version downloads preserve prerelease identifiers and build metadata.
+
+Existing packages without stored tags use their most recent stable upload for `latest`.
+Packages with only prereleases have no inferred `latest` tag.
+Old publish tags cannot be recovered because earlier Pkgly versions discarded them.
+Use `npm dist-tag add` to restore those tags.
+
 ## Logging in
 
 When you run `npm adduser` it will first send a request to `{registry_url}/-/v1/login`
