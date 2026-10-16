@@ -21,6 +21,8 @@ use crate::repository::{maven::get_release_type, npm::NPMRegistryError};
 pub enum NPMCommand {
     #[strum(serialize = "publish")]
     Publish,
+    #[strum(serialize = "deprecate", serialize = "undeprecate")]
+    Deprecate,
 }
 impl TryFrom<&HeaderValue> for NPMCommand {
     type Error = InvalidNPMCommand;
@@ -197,10 +199,10 @@ impl GetPath {
             debug!(?name, ?version, "Version info");
             return Ok(GetPath::VersionInfo { name, version });
         }
-        if length == 5 {
-            let file = components[4].to_string();
-            let version =
-                extract_version_from_file(&file).ok_or(NPMRegistryError::InvalidGetRequest)?;
+        if length == 4 || length == 5 {
+            let file = components[length - 1].to_string();
+            let version = extract_version_from_file(&file, &name)
+                .ok_or(NPMRegistryError::InvalidGetRequest)?;
             return Ok(GetPath::GetTar {
                 name,
                 version,
@@ -231,8 +233,8 @@ impl GetPath {
         }
         if length == 3 {
             let file = components[2].to_string();
-            let version =
-                extract_version_from_file(&file).ok_or(NPMRegistryError::InvalidGetRequest)?;
+            let version = extract_version_from_file(&file, &name)
+                .ok_or(NPMRegistryError::InvalidGetRequest)?;
             return Ok(GetPath::GetTar {
                 name,
                 version,
@@ -256,13 +258,16 @@ impl TryFrom<StoragePath> for GetPath {
         }
     }
 }
-pub fn extract_version_from_file(file: &str) -> Option<String> {
-    let parts: Vec<_> = file.split('-').collect();
-    if let Some(version) = parts.last() {
-        let version = version.trim_end_matches(".tgz");
-        return Some(version.to_string());
-    }
-    None
+/// Extracts a complete semantic version from an npm tarball filename.
+pub fn extract_version_from_file(file: &str, package: &str) -> Option<String> {
+    let name = package.rsplit('/').next()?;
+    let version = file
+        .strip_prefix(name)?
+        .strip_prefix('-')?
+        .strip_suffix(".tgz")?;
+    semver::Version::parse(version)
+        .ok()
+        .map(|_| version.to_owned())
 }
 
 #[cfg(test)]
