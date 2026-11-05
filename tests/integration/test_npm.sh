@@ -430,6 +430,49 @@ else
     fail "Failed to publish unscoped package"
 fi
 
+# Send the same version directly so a client-side duplicate check cannot mask registry behavior.
+print_test "Republish keeps the downloaded tarball consistent with its advertised checksum"
+if [ -n "${UNSCOPED_METADATA:-}" ]; then
+    REPUBLISH_URL="${PKGLY_URL}/repositories/${NPM_HOSTED_REPO}/pkgly-test-unscoped"
+    REPUBLISH_VERSION=$(jq -r .version package.json)
+    ORIGINAL_URL=$(jq -er --arg v "$REPUBLISH_VERSION" '.versions[$v].dist.tarball' <<<"$UNSCOPED_METADATA")
+    ORIGINAL_SHA=$(jq -er --arg v "$REPUBLISH_VERSION" '.versions[$v].dist.shasum' <<<"$UNSCOPED_METADATA")
+    curl -fsS -H "$(get_auth_header)" "$ORIGINAL_URL" -o "$WORKSPACE/original.tgz"
+
+    printf '\n// Change the contents without changing the version.\n' >> index.js
+    PACKED=$(npm pack --json --pack-destination "$WORKSPACE")
+    REPLACEMENT="$WORKSPACE/$(jq -er '.[0].filename' <<<"$PACKED")"
+    base64 -w 0 "$REPLACEMENT" > "$WORKSPACE/replacement.base64"
+    jq --arg v "$REPUBLISH_VERSION" --argjson pack "$PACKED" --rawfile data "$WORKSPACE/replacement.base64" '
+        .versions[$v] as $manifest | $pack[0] as $archive |
+        {name, "dist-tags": {latest: $v},
+         versions: {($v): ($manifest | .dist.shasum = $archive.shasum | .dist.integrity = $archive.integrity)},
+         _attachments: {($archive.filename): {content_type: "application/octet-stream", length: $archive.size, data: $data}}}
+    ' <<<"$UNSCOPED_METADATA" > "$WORKSPACE/republish.json"
+
+    REPUBLISH_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+        -H "$(get_auth_header)" -H 'Content-Type: application/json' -H 'Npm-Command: publish' \
+        --data-binary "@$WORKSPACE/republish.json" "$REPUBLISH_URL")
+    FINAL_METADATA=$(curl -fsS -H "$(get_auth_header)" "$REPUBLISH_URL")
+    FINAL_URL=$(jq -er --arg v "$REPUBLISH_VERSION" '.versions[$v].dist.tarball' <<<"$FINAL_METADATA")
+    FINAL_SHA=$(jq -er --arg v "$REPUBLISH_VERSION" '.versions[$v].dist.shasum' <<<"$FINAL_METADATA")
+    curl -fsS -H "$(get_auth_header)" "$FINAL_URL" -o "$WORKSPACE/served.tgz"
+    ORIGINAL_ACTUAL=$(sha1sum "$WORKSPACE/original.tgz" | cut -d ' ' -f 1)
+    REPLACEMENT_SHA=$(jq -er '.[0].shasum' <<<"$PACKED")
+    SERVED_SHA=$(sha1sum "$WORKSPACE/served.tgz" | cut -d ' ' -f 1)
+    if [ "$ORIGINAL_SHA" != "$ORIGINAL_ACTUAL" ] || [ "$ORIGINAL_SHA" = "$REPLACEMENT_SHA" ]; then
+        fail "Invalid fixture: the first download must match its metadata and the replacement must differ"
+    elif [ "$FINAL_SHA" != "$SERVED_SHA" ]; then
+        fail "Republish returned HTTP $REPUBLISH_STATUS: metadata advertises $FINAL_SHA but the tarball hashes to $SERVED_SHA"
+    elif [[ "$REPUBLISH_STATUS" = 2?? || "$REPUBLISH_STATUS" = 409 ]]; then
+        pass
+    else
+        fail "Unexpected republish status: HTTP $REPUBLISH_STATUS"
+    fi
+else
+    fail "Unscoped fixture publication failed"
+fi
+
 # Cleanup
 cleanup_workspace "$WORKSPACE"
 
