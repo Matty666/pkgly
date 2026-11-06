@@ -17,6 +17,7 @@ const mockRouter = {
 };
 
 const httpPost = vi.fn();
+const mockSiteInfo: Record<string, unknown> = {};
 
 vi.mock("@/http", () => ({
   default: {
@@ -34,7 +35,7 @@ vi.mock("@/stores/session", () => ({
 
 vi.mock("@/stores/site", () => ({
   siteStore: () => ({
-    siteInfo: {},
+    siteInfo: mockSiteInfo,
     getInfo: vi.fn().mockResolvedValue(undefined),
   }),
 }));
@@ -88,7 +89,8 @@ async function mountLogin() {
         "v-card-text": { template: "<div><slot /></div>" },
         "v-avatar": { template: "<div />" },
         "v-btn": {
-          template: "<button :type=\"$attrs.type\" :aria-label=\"$attrs['aria-label']\"><slot /></button>",
+          template:
+            '<button :type="$attrs.type" :aria-label="$attrs[\'aria-label\']"><slot /></button>',
         },
         "v-divider": { template: "<div><slot /></div>" },
         "v-form": VFormStub,
@@ -104,6 +106,20 @@ async function mountLogin() {
 describe("LoginView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    for (const key of Object.keys(mockSiteInfo)) delete mockSiteInfo[key];
+  });
+
+  it("uses configured labels for two arbitrary OIDC providers", async () => {
+    mockSiteInfo.oauth2 = {
+      providers: [
+        { provider: "company-sso", display_name: "Company sign-in" },
+        { provider: "partner", display_name: "Partner access" },
+      ],
+    };
+    const wrapper = await mountLogin();
+    expect(wrapper.text()).toContain("Sign in with Company sign-in");
+    expect(wrapper.text()).toContain("Sign in with Partner access");
+    expect(wrapper.get("#login-username").exists()).toBe(true);
   });
 
   it("shows the inline login error without triggering a global alert on 401", async () => {

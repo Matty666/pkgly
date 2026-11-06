@@ -214,6 +214,7 @@ fn merge_oauth2_settings_sanitizes_paths_and_mappings() {
             redirect_path: None,
         }),
         microsoft: None,
+        providers: Default::default(),
         casbin: None,
         group_role_mappings: vec![],
     };
@@ -231,6 +232,7 @@ fn merge_oauth2_settings_sanitizes_paths_and_mappings() {
             redirect_path: Some("callback".into()),
         }),
         microsoft: None,
+        providers: Default::default(),
         casbin: None,
         group_role_mappings: vec![
             OAuth2GroupRoleMapping {
@@ -687,4 +689,96 @@ fn password_rules_accepts_any_when_no_constraints() {
 
     assert!(rules.validate(""));
     assert!(rules.validate("anything"));
+}
+
+#[test]
+fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
+    let current: OAuth2Settings = serde_json::from_value(json!({"providers":[{
+        "id":"company", "display_name":"Company", "issuer":"https://id.example", "client_id":"pkgly", "client_secret":"secret"
+    }]})).unwrap();
+    let base = json!({"enabled":false,"login_path":"/api/user/oauth2/login","callback_path":"/api/user/oauth2/callback","auto_create_users":false});
+    let omitted: OAuth2SettingsRequest = serde_json::from_value(base.clone()).unwrap();
+    let retained = merge_oauth2_settings(Some(&current), omitted).unwrap();
+    assert_eq!(retained.providers[0].client_secret, "secret");
+    let response = serde_json::to_value(build_oauth2_response(&retained)).unwrap();
+    assert_eq!(response["providers"][0]["client_secret_configured"], true);
+    assert!(response["providers"][0].get("client_secret").is_none());
+    let mut update = base.clone();
+    let mut provider = serde_json::to_value(&current.providers[0]).unwrap();
+    provider.as_object_mut().unwrap().remove("client_secret");
+    update["providers"] = json!([provider.clone()]);
+    let merged = merge_oauth2_settings(
+        Some(&current),
+        serde_json::from_value(update.clone()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(merged.providers[0].client_secret, "secret");
+    update["providers"][0]["client_secret"] = serde_json::Value::Null;
+    assert_eq!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .unwrap()
+        .providers[0]
+            .client_secret,
+        "secret"
+    );
+    update["providers"][0]["client_secret"] = json!("replacement");
+    assert_eq!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .unwrap()
+        .providers[0]
+            .client_secret,
+        "replacement"
+    );
+    update["providers"][0]["client_secret"] = json!("");
+    assert!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .is_err()
+    );
+    update["providers"][0]["client_secret"] = serde_json::Value::Null;
+    update["providers"][0]["id"] = "new-id".into();
+    assert!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .is_err()
+    );
+    update["providers"] = json!([]);
+    assert!(
+        merge_oauth2_settings(Some(&current), serde_json::from_value(update).unwrap())
+            .unwrap()
+            .providers
+            .is_empty()
+    );
+}
+
+#[test]
+fn generic_oidc_admin_rejects_dangling_role_mappings() {
+    let current: OAuth2Settings = serde_json::from_value(json!({
+        "providers":[{"id":"company", "enabled":false}]
+    }))
+    .unwrap();
+    let mut payload = json!({"enabled":false, "providers":[], "login_path":"/api/user/oauth2/login", "callback_path":"/api/user/oauth2/callback", "auto_create_users":false, "group_role_mappings":[
+        {"provider":"company", "group":"staff", "roles":["read"]}
+    ]});
+    assert!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(payload.clone()).unwrap()
+        )
+        .is_err()
+    );
+    payload["group_role_mappings"] = json!([]);
+    assert!(
+        merge_oauth2_settings(Some(&current), serde_json::from_value(payload).unwrap()).is_ok()
+    );
 }

@@ -64,3 +64,110 @@ fn oauth_service_rejects_missing_providers() {
     let result = OAuth2Service::new(settings);
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn generic_oidc_authorization_uses_configuration_and_persists_nonce() {
+    for id in ["company-sso", "partner-login"] {
+        let settings: OAuth2Settings = serde_json::from_value(serde_json::json!({
+            "enabled":true, "redirect_base_url":"https://pkgly.example",
+            "providers":[{"id":id,"display_name":"Custom login","issuer":"https://id.example/team",
+                "client_id":"client", "client_secret":"secret",
+                "endpoints":{"authorization_url":"https://id.example/unusual/authorize",
+                    "token_url":"https://id.example/unusual/token","jwks_url":"https://id.example/keys"}}]
+        })).unwrap();
+        let service = OAuth2Service::initialize(settings).await.unwrap().unwrap();
+        let provider = id.parse().unwrap();
+        let redirect = service
+            .begin_authorization(provider, None, Some("/browse".into()))
+            .unwrap();
+        assert_eq!(redirect.authorization_url.path(), "/unusual/authorize");
+        let params: std::collections::HashMap<_, _> =
+            redirect.authorization_url.query_pairs().collect();
+        assert_eq!(params["client_id"], "client");
+        assert_eq!(params["code_challenge_method"], "S256");
+        let snapshot = service.export_state(&redirect.state).unwrap();
+        assert_eq!(snapshot.provider.to_string(), id);
+        assert_eq!(snapshot.nonce.as_deref(), Some(params["nonce"].as_ref()));
+        assert_eq!(
+            snapshot.callback_uri.as_deref(),
+            Some("https://pkgly.example/api/user/oauth2/callback")
+        );
+        assert!(snapshot.config_fingerprint.is_some());
+        let info = service.provider_descriptors();
+        assert_eq!(info[0].display_name, "Custom login");
+    }
+}
+
+#[tokio::test]
+async fn generic_oidc_disabled_provider_is_not_advertised() {
+    let mut settings = google_settings();
+    settings.providers =
+        serde_json::from_value(serde_json::json!([{"id":"unused", "enabled":false}])).unwrap();
+    let service = OAuth2Service::initialize(settings).await.unwrap().unwrap();
+    assert_eq!(service.provider_descriptors().len(), 1);
+    assert!(
+        service
+            .begin_authorization("unused".parse().unwrap(), None, None)
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn generic_oidc_rejects_missing_nonce_and_removed_provider_before_exchange() {
+    let settings: OAuth2Settings=serde_json::from_value(serde_json::json!({"enabled":true,"redirect_base_url":"https://pkgly.example",
+        "providers":[{"id":"company","display_name":"Company","issuer":"https://id.example","client_id":"pkgly","client_secret":"secret",
+            "endpoints":{"authorization_url":"https://id.example/auth","token_url":"https://id.example/token","jwks_url":"https://id.example/keys"}}]})).unwrap();
+    let service = OAuth2Service::initialize(settings).await.unwrap().unwrap();
+    let auth = service
+        .begin_authorization("company".parse().unwrap(), None, None)
+        .unwrap();
+    let snapshot = service.export_state(&auth.state).unwrap();
+    for missing in [
+        "nonce",
+        "callback_uri",
+        "config_fingerprint",
+        "changed_callback",
+    ] {
+        let mut invalid = snapshot.clone();
+        match missing {
+            "nonce" => invalid.nonce = None,
+            "callback_uri" => invalid.callback_uri = None,
+            "config_fingerprint" => invalid.config_fingerprint = None,
+            _ => invalid.callback_uri = Some("https://other.example/callback".into()),
+        }
+        assert!(
+            matches!(
+                service
+                    .exchange_code_with_export(None, AuthorizationCode::new("code".into()), invalid)
+                    .await,
+                Err(OAuth2ServiceError::InvalidState)
+            ),
+            "{missing}"
+        );
+    }
+    let removed = OAuth2Service::initialize(google_settings())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        removed
+            .exchange_code_with_export(None, AuthorizationCode::new("code".into()), snapshot)
+            .await,
+        Err(OAuth2ServiceError::ProviderNotConfigured(_))
+    ));
+}
+
+#[tokio::test]
+async fn generic_oidc_can_disable_the_last_custom_provider() {
+    let settings: OAuth2Settings = serde_json::from_value(serde_json::json!({
+        "enabled": true, "providers": [{"id":"company", "enabled":false}]
+    }))
+    .unwrap();
+    let service = OAuth2Service::initialize(settings).await.unwrap().unwrap();
+    assert!(service.provider_descriptors().is_empty());
+    assert!(
+        service
+            .begin_authorization("company".parse().unwrap(), None, None)
+            .is_err()
+    );
+}
