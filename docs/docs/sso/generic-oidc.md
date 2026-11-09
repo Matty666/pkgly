@@ -47,6 +47,7 @@ IDs accept lowercase letters, digits, hyphens, and underscores, with a maximum o
 IDs must be unique, including disabled providers. Google, Microsoft, and existing Microsoft aliases are reserved.
 The login label can change without changing the ID. Login buttons use configuration order after the built-in providers.
 Use the provider ID in group-to-role mappings.
+Select **Add mapping** above the mapping cards. Each card has its own **Remove** button.
 Disabled providers retain their configuration. You can disable all custom providers and keep password login available.
 Removing a custom provider also removes its role mappings in the editor. The API rejects mappings for unknown custom provider IDs.
 

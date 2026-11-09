@@ -312,6 +312,14 @@ describe("AdminSystem.vue", () => {
     );
     await wrapper.get('[data-testid="generic-name"] input').setValue("Updated label");
     await wrapper.get('input[id^="generic-enabled-"]').setValue(false);
+    const provider = wrapper.getComponent('[data-testid="mapping-provider"]');
+    expect(provider.props("modelValue")).toBe("partner-login");
+    expect(provider.props("items")).toEqual([
+      { title: "Google", value: "google" },
+      { title: "Microsoft", value: "microsoft" },
+      { title: "Updated label", value: "partner-login" },
+    ]);
+    await provider.get("select").setValue("google");
     await wrapper.get("form.oauthForm").trigger("submit");
     await flushPromises();
     expect(httpPut).toHaveBeenLastCalledWith(
@@ -325,8 +333,10 @@ describe("AdminSystem.vue", () => {
             client_secret: null,
           }),
         ],
+        group_role_mappings: [{ provider: "google", group: "staff", roles: ["read"] }],
       }),
     );
+    await provider.get("select").setValue("partner-login");
     const remove = wrapper.findAll("button").find((button) => button.text() === "Remove provider")!;
     await remove.trigger("click");
     await wrapper.get("form.oauthForm").trigger("submit");

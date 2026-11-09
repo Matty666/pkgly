@@ -135,6 +135,14 @@ const oauthForm = ref<EditableOAuthConfiguration>(defaultOAuthForm());
 const oauthInitialSignature = ref(JSON.stringify(oauthForm.value));
 const availableRoles = ref<string[]>([]);
 const roleOptionsId = "pkgly-role-options";
+const mappingProviderOptions = computed(() => [
+  { title: "Google", value: "google" },
+  { title: "Microsoft", value: "microsoft" },
+  ...oauthForm.value.providers.map((provider) => ({
+    title: provider.display_name || provider.id,
+    value: provider.id,
+  })),
+]);
 
 const alerts = useAlertsStore();
 
@@ -1172,13 +1180,10 @@ function removeOidcProvider(id: string) {
 
         <section class="providerSection genericProviders">
           <header class="providerSection__header">
-            <div class="providerSection__title">
-              <h3>Custom OIDC providers</h3>
-              <p class="hint">
-                Configure your identity provider with its issuer and client credentials. The issuer
-                supplies endpoints through discovery.
-              </p>
-            </div>
+            <h3>Custom OIDC providers</h3>
+            <p class="hint">
+              Enter the issuer URL and client credentials. Pkgly discovers the endpoints.
+            </p>
             <v-btn
               data-testid="add-generic-provider"
               variant="outlined"
@@ -1289,12 +1294,21 @@ function removeOidcProvider(id: string) {
           </div>
         </section>
 
-        <div class="roleMappings">
-          <header class="roleMappings__header">
+        <section class="providerSection roleMappings">
+          <header class="providerSection__header">
             <h3>Group to role mappings</h3>
             <p>
               Map provider group or role claims to Pkgly Casbin roles. Roles are comma separated.
             </p>
+            <v-btn
+              variant="outlined"
+              color="primary"
+              block
+              :disabled="!oauthForm.enabled"
+              prepend-icon="mdi-plus"
+              @click="addGroupMapping">
+              Add mapping
+            </v-btn>
           </header>
           <div
             v-if="oauthForm.group_role_mappings.length === 0"
@@ -1304,53 +1318,44 @@ function removeOidcProvider(id: string) {
           <div
             v-for="mapping in oauthForm.group_role_mappings"
             :key="mapping.id"
-            class="mappingRow">
-            <label>
-              Provider
-              <select v-model="mapping.provider">
-                <option value="google">Google</option>
-                <option value="microsoft">Microsoft</option>
-                <option
-                  v-for="provider in oauthForm.providers"
-                  :key="provider.rowId"
-                  :value="provider.id">
-                  {{ provider.display_name || provider.id }}
-                </option>
-              </select>
-            </label>
-            <TextInput
-              :id="`mapping-group-${mapping.id}`"
-              v-model="mapping.group"
-              autocomplete="off"
-              required>
-              Group or role ID
-            </TextInput>
-            <TextInput
-              :id="`mapping-roles-${mapping.id}`"
-              v-model="mapping.rolesText"
-              :list="roleOptionsId"
-              autocomplete="off"
-              placeholder="read/write, admin">
-              Pkgly roles (comma separated)
-            </TextInput>
-            <v-btn
-              variant="text"
-              color="error"
-              :disabled="!oauthForm.enabled"
-              prepend-icon="mdi-delete"
-              @click="removeGroupMapping(mapping.id)">
-              Remove
-            </v-btn>
+            class="roleMapping">
+            <div class="mappingRow">
+              <v-select
+                :id="`mapping-provider-${mapping.id}`"
+                data-testid="mapping-provider"
+                v-model="mapping.provider"
+                label="Provider"
+                :items="mappingProviderOptions"
+                variant="outlined"
+                density="comfortable" />
+              <TextInput
+                :id="`mapping-group-${mapping.id}`"
+                v-model="mapping.group"
+                autocomplete="off"
+                required>
+                Group or role ID
+              </TextInput>
+              <TextInput
+                :id="`mapping-roles-${mapping.id}`"
+                v-model="mapping.rolesText"
+                :list="roleOptionsId"
+                autocomplete="off"
+                placeholder="read/write, admin">
+                Pkgly roles (comma separated)
+              </TextInput>
+            </div>
+            <div class="providerActions">
+              <v-btn
+                variant="text"
+                color="error"
+                :disabled="!oauthForm.enabled"
+                prepend-icon="mdi-delete"
+                @click="removeGroupMapping(mapping.id)">
+                Remove
+              </v-btn>
+            </div>
           </div>
-          <v-btn
-            variant="outlined"
-            color="primary"
-            :disabled="!oauthForm.enabled"
-            prepend-icon="mdi-plus"
-            @click="addGroupMapping">
-            Add mapping
-          </v-btn>
-        </div>
+        </section>
 
         <footer class="actions">
           <SubmitButton
@@ -1391,7 +1396,8 @@ function removeOidcProvider(id: string) {
   gap: 1.5rem;
 }
 
-.oidcProvider {
+.oidcProvider,
+.roleMapping {
   border: 1px dashed var(--nr-border-color);
   border-radius: var(--nr-radius-md);
   padding: 0.75rem;
@@ -1463,20 +1469,9 @@ function removeOidcProvider(id: string) {
   }
 }
 
-.roleMappings {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-
-  &__header {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-
-    h3 {
-      margin: 0;
-    }
-  }
+.roleMapping .mappingRow {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: start;
 }
 
 .roles-field {
