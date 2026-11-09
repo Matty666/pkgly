@@ -1,0 +1,124 @@
+name: GHCR repository publishing smoke test
+'on':
+  push:
+    branches:
+    - codex/ghcr-publish-smoke-1337d56
+permissions:
+  contents: read
+  packages: write
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - platform: linux/amd64
+          arch: amd64
+          runner: ubuntu-24.04
+        - platform: linux/arm64
+          arch: arm64
+          runner: ubuntu-24.04-arm
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Normalize GHCR image name
+      run: printf 'IMAGE_NAME=%s\n' "${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+    - name: Check fork registry destination
+      run: test "$IMAGE_NAME" = ghcr.io/matty666/pkgly
+    - name: Build and push image
+      uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+      with:
+        context: ./.ghcr-smoke
+        file: ./.ghcr-smoke/Dockerfile
+        platforms: ${{ matrix.platform }}
+        pull: false
+        push: true
+        tags: ${{ env.IMAGE_NAME }}:ghcr-smoke-${{ github.sha }}-${{ matrix.arch }}
+        labels: 'org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+          org.opencontainers.image.revision=${{ github.sha }}
+
+          '
+        cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:ghcr-smoke-cache-${{ github.sha }}-${{ matrix.arch }}
+        cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:ghcr-smoke-cache-${{ github.sha }}-${{ matrix.arch }},mode=max
+    timeout-minutes: 8
+  extract-binaries:
+    name: Extract pkgly binary (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          runner: ubuntu-24.04
+        - arch: arm64
+          runner: ubuntu-24.04-arm
+    steps:
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Extract binary from image
+      run: 'set -euo pipefail
+
+        image="${IMAGE_NAME,,}:ghcr-smoke-${GITHUB_SHA}-${{ matrix.arch }}"
+
+        binary="pkgly-linux-${{ matrix.arch }}-${GITHUB_SHA}"
+
+        docker pull "$image"
+
+        container_id="$(docker create "$image")"
+
+        docker cp "$container_id:/app/pkgly" "$binary"
+
+        docker rm "$container_id"
+
+        chmod 755 "$binary"
+
+        '
+    - name: Check extracted fixture
+      run: test "$(cat pkgly-linux-${{ matrix.arch }}-${GITHUB_SHA})" = ghcr-smoke-fixture
+    timeout-minutes: 8
+  manifest:
+    name: Publish multi-platform manifest
+    runs-on: ubuntu-24.04
+    needs:
+    - extract-binaries
+    steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create and push manifest
+      run: "image=\"${IMAGE_NAME,,}\"\ndocker buildx imagetools create \\\n  --tag \"${image}:ghcr-smoke-${GITHUB_SHA}\" \\\
+        \n  --tag \"${image}:ghcr-smoke-index-${GITHUB_SHA}\" \\\n  \"${image}:ghcr-smoke-${GITHUB_SHA}-amd64\" \\\n  \"${image}:ghcr-smoke-${GITHUB_SHA}-arm64\"\
+        \n"
+    - name: Promote Docker image tag
+      env:
+        COMMIT_SHA: ghcr-smoke-${{ github.sha }}
+        RELEASE_TAGS: ghcr-smoke-release-${{ github.sha }}
+      run: "set -euo pipefail\nimage=\"${IMAGE_NAME,,}\"\ndocker buildx imagetools inspect \"${image}:${COMMIT_SHA}\" >/dev/null\n\
+        for release_tag in $RELEASE_TAGS; do\n  docker buildx imagetools create \\\n    --tag \"${image}:${release_tag}\"\
+        \ \\\n    \"${image}:${COMMIT_SHA}\"\ndone\n"
+    timeout-minutes: 8
