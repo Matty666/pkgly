@@ -6,7 +6,10 @@ use nr_core::{
 };
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use testcontainers::{clients::Cli, images::generic::GenericImage};
 
 async fn test_site(port: u16, root: &std::path::Path) -> Pkgly {
@@ -95,9 +98,29 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     let token_server = token.clone();
     let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let requests_server = requests.clone();
+    let discovery_online = Arc::new(AtomicBool::new(true));
+    let discovery_requests = Arc::new(AtomicUsize::new(0));
+    let key_requests = Arc::new(AtomicUsize::new(0));
+    let discovery_status = discovery_online.clone();
+    let discovery_counter = discovery_requests.clone();
+    let key_counter = key_requests.clone();
+    let partner_key_counter = key_requests.clone();
     let app=axum::Router::new()
-        .route("/.well-known/openid-configuration",axum::routing::get(move || { let metadata=metadata.clone(); async move { axum::Json(metadata) } }))
-        .route("/arbitrary/keys",axum::routing::get(move || { let keys=keys_server.lock().clone(); async move { axum::Json(keys) } }))
+        .route("/.well-known/openid-configuration", axum::routing::get(move || {
+            discovery_counter.fetch_add(1, Ordering::SeqCst);
+            let status = if discovery_status.load(Ordering::SeqCst) {
+                StatusCode::OK
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            };
+            let metadata = metadata.clone();
+            async move { (status, axum::Json(metadata)) }
+        }))
+        .route("/arbitrary/keys",axum::routing::get(move || {
+            key_counter.fetch_add(1, Ordering::SeqCst);
+            let keys=keys_server.lock().clone();
+            async move { axum::Json(keys) }
+        }))
         .route("/arbitrary/token",axum::routing::post(move |headers: axum::http::HeaderMap, axum::Form(form): axum::Form<std::collections::HashMap<String, String>>| {
             let token=token_server.lock().clone();
             requests_server.lock().push((headers, form));
@@ -107,6 +130,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     let partner_requests = requests.clone();
     let app = app
         .route("/partner/signing-keys", axum::routing::get(move || {
+            partner_key_counter.fetch_add(1, Ordering::SeqCst);
             let keys = partner_keys.lock().clone();
             async move { axum::Json(keys) }
         }))
@@ -135,6 +159,28 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         .unwrap();
     let public = list_providers(State(site.clone())).await.unwrap();
     assert_eq!(public.status(), StatusCode::OK);
+    assert_eq!(discovery_requests.load(Ordering::SeqCst), 0);
+    discovery_online.store(false, Ordering::SeqCst);
+    let failed_login = authorize(
+        State(site.clone()),
+        Path("company".into()),
+        Query(OAuthAuthorizeQuery { redirect: None }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(failed_login.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(discovery_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        site.instance
+            .lock()
+            .oauth2
+            .as_ref()
+            .unwrap()
+            .providers
+            .len(),
+        2
+    );
+    discovery_online.store(true, Ordering::SeqCst);
 
     // Verified email wins over a different username. Missing/false verification uses the existing username fallback.
     for (verified, expected, inactive, method, provider_index) in [
@@ -158,11 +204,19 @@ async fn generic_oidc_database_login_state_and_account_policy() {
             .execute(&site.database)
             .await
             .unwrap();
+        let discovery_before = discovery_requests.load(Ordering::SeqCst);
+        let key_requests_before = key_requests.load(Ordering::SeqCst);
         let service = site.oauth2_service().unwrap();
         let auth = service
             .begin_authorization(provider_id.parse().unwrap(), None, Some("/browse".into()))
+            .await
             .unwrap();
-        let snapshot = service.export_state(&auth.state).unwrap();
+        let mut snapshot = service.export_state(&auth.state).unwrap();
+        assert_eq!(snapshot.discovered_endpoints.is_some(), provider_index == 0);
+        let legacy_state = provider_index == 0 && verified.is_none();
+        if legacy_state {
+            snapshot.discovered_endpoints = None;
+        }
         persist_oauth_state(&site, &auth.state, &snapshot)
             .await
             .unwrap();
@@ -174,35 +228,18 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         }
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
         header.kid = Some("test-key".into());
-        let signed = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
         if provider_index == 0 && verified == Some(true) && !inactive {
-            service
-                .verify_generic_token(
-                    &snapshot.provider,
-                    &signed,
-                    snapshot.nonce.as_deref().unwrap(),
-                )
-                .await
-                .unwrap();
             let mut rotated = initial_keys.clone();
             rotated["keys"][0]["kid"] = json!("rotated-key");
             *keys.lock() = rotated;
             header.kid = Some("rotated-key".into());
-            let signed = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
-            service
-                .verify_generic_token(
-                    &snapshot.provider,
-                    &signed,
-                    snapshot.nonce.as_deref().unwrap(),
-                )
-                .await
-                .unwrap();
         }
         *token.lock() = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
         // Replace the runtime to exercise callback recovery from database state.
         site.update_oauth2_settings(Some(case_settings))
             .await
             .unwrap();
+        discovery_online.store(legacy_state, Ordering::SeqCst);
         let access = AccessLogContext::default();
         let response = callback(
             State(site.clone()),
@@ -219,7 +256,13 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         )
         .await
         .unwrap();
+        discovery_online.store(true, Ordering::SeqCst);
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            discovery_requests.load(Ordering::SeqCst),
+            discovery_before + usize::from(provider_index == 0) + usize::from(legacy_state)
+        );
+        assert_eq!(key_requests.load(Ordering::SeqCst), key_requests_before + 1);
         if inactive {
             assert!(
                 response.headers()[LOCATION]
@@ -301,6 +344,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     let service = site.oauth2_service().unwrap();
     let auth = service
         .begin_authorization("company".parse().unwrap(), None, None)
+        .await
         .unwrap();
     let snapshot = service.export_state(&auth.state).unwrap();
     persist_oauth_state(&site, &auth.state, &snapshot)
@@ -318,8 +362,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     // Settings validation and persistence failure must leave the prior runtime usable.
     let mut changed = settings.clone();
     changed.providers[0].client_secret = "replacement".into();
-    let replacement = crate::app::authentication::oauth::OAuth2Service::initialize(changed.clone())
-        .await
+    let replacement = crate::app::authentication::oauth::OAuth2Service::new(changed.clone())
         .unwrap()
         .unwrap();
     assert!(matches!(
@@ -346,7 +389,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         .await
         .unwrap();
     let mut invalid = settings.clone();
-    invalid.providers[0].issuer = format!("{issuer}/missing");
+    invalid.providers[0].issuer = "not a URL".into();
     assert!(site.update_oauth2_settings(Some(invalid)).await.is_err());
     assert_eq!(
         site.oauth2_settings_raw().unwrap().providers[0].issuer,

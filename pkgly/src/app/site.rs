@@ -316,7 +316,7 @@ impl Pkgly {
         }
 
         let oauth2_service = match security.oauth2.clone() {
-            Some(cfg) if cfg.enabled => match OAuth2Service::initialize(cfg.clone()).await {
+            Some(cfg) if cfg.enabled => match OAuth2Service::new(cfg.clone()) {
                 Ok(Some(service)) => Some(Arc::new(service)),
                 Ok(None) => None,
                 Err(err) => {
@@ -601,8 +601,7 @@ impl Pkgly {
 
         if let Some(cfg) = settings.clone() {
             if cfg.enabled {
-                let service = OAuth2Service::initialize(cfg.clone())
-                    .await
+                let service = OAuth2Service::new(cfg.clone())
                     .map_err(|err| anyhow!("Failed to initialize OAuth2 service: {err}"))?
                     .ok_or_else(|| {
                         anyhow!("OAuth2 configuration is missing provider credentials")

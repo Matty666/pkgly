@@ -24,7 +24,8 @@ use thiserror::Error;
 use tracing::{trace, warn};
 
 use crate::app::config::{
-    OAuth2GoogleConfig, OAuth2MicrosoftConfig, OAuth2ProviderKind, OAuth2Settings,
+    OAuth2GenericConfig, OAuth2GenericEndpoints, OAuth2GoogleConfig, OAuth2MicrosoftConfig,
+    OAuth2ProviderKind, OAuth2Settings,
 };
 
 mod generic;
@@ -71,6 +72,8 @@ pub enum OAuth2ServiceError {
     InvalidState,
     #[error("Failed to construct OAuth2 client: {0}")]
     ClientConstruction(String),
+    #[error("OIDC discovery failed: {0}")]
+    DiscoveryFailed(String),
     #[error("OAuth2 token request failed: {0}")]
     TokenRequestFailed(String),
 }
@@ -81,11 +84,10 @@ pub struct OAuth2Service {
     providers: HashMap<OAuth2ProviderKind, OAuth2ProviderRuntime>,
     state_store: Arc<OAuthStateStore>,
     http_client: HttpClient,
-    jwks: JwksManager<ReqwestJwksFetcher>,
 }
 
 impl OAuth2Service {
-    /// Construct built-in clients without discovery. Use initialize for generic providers.
+    /// Register generic providers and build built-in clients without discovery.
     /// Returns an error for invalid settings or missing provider configuration.
     pub fn new(settings: OAuth2Settings) -> Result<Option<Self>, OAuth2ServiceError> {
         if !settings.enabled {
@@ -127,79 +129,71 @@ impl OAuth2Service {
             providers,
             state_store: Arc::new(OAuthStateStore::default()),
             http_client: oauth_http_client()?,
-            jwks: JwksManager::new(
-                ReqwestJwksFetcher::new().map_err(|_| {
-                    OAuth2ServiceError::ClientConstruction("Cannot build JWKS client".into())
-                })?,
-                Duration::from_secs(3600),
-            ),
         }))
     }
 
-    /// Construct enabled clients and resolve generic discovery metadata.
-    /// Returns an error for invalid configuration or unavailable discovery.
-    pub async fn initialize(settings: OAuth2Settings) -> Result<Option<Self>, OAuth2ServiceError> {
-        let Some(mut service) = Self::new(settings)? else {
-            return Ok(None);
-        };
-        for config in service.settings.providers.iter().filter(|cfg| cfg.enabled) {
-            let runtime = generic::runtime(config, &service.settings, &service.http_client)
-                .await
-                .map_err(OAuth2ServiceError::ClientConstruction)?;
-            service.providers.insert(runtime.provider.clone(), runtime);
-        }
-        Ok(Some(service))
-    }
-
-    /// Return public descriptors in configured order, without credentials.
+    /// Return configured login choices in order, without contacting the providers.
     pub fn provider_descriptors(&self) -> Vec<ProviderDescriptor> {
-        let ordered = [OAuth2ProviderKind::Google, OAuth2ProviderKind::Microsoft]
-            .into_iter()
-            .chain(
-                self.settings
-                    .providers
-                    .iter()
-                    .map(|cfg| OAuth2ProviderKind::Custom(cfg.id.clone())),
-            );
-        ordered
-            .filter_map(|kind| {
-                self.providers.get(&kind).map(|runtime| ProviderDescriptor {
-                    provider: kind.to_string(),
-                    display_name: runtime.display_name.clone(),
-                    login_path: format!(
-                        "{}/{}",
-                        self.settings.login_path.trim_end_matches('/'),
-                        kind
-                    ),
-                    redirect_path: Some(runtime.redirect_path.clone()),
-                })
-            })
+        let builtins = [OAuth2ProviderKind::Google, OAuth2ProviderKind::Microsoft]
+            .iter()
+            .filter_map(|kind| self.providers.get(kind))
+            .map(|runtime| {
+                (
+                    runtime.provider.to_string(),
+                    runtime.display_name.clone(),
+                    runtime.redirect_path.clone(),
+                )
+            });
+        let custom = self
+            .settings
+            .providers
+            .iter()
+            .filter(|cfg| cfg.enabled)
+            .map(|cfg| {
+                (
+                    cfg.id.clone(),
+                    cfg.display_name.clone(),
+                    cfg.redirect_path
+                        .clone()
+                        .unwrap_or_else(|| self.settings.callback_path.clone()),
+                )
+            });
+        let login_path = self.settings.login_path.trim_end_matches('/');
+        builtins
+            .chain(custom)
+            .map(
+                |(provider, display_name, redirect_path)| ProviderDescriptor {
+                    login_path: format!("{login_path}/{provider}"),
+                    provider,
+                    display_name,
+                    redirect_path: Some(redirect_path),
+                },
+            )
             .collect()
     }
 
     /// Verify a generic ID token with its configured issuer, keys, audience, and saved nonce.
     pub async fn verify_generic_token(
         &self,
-        provider: &OAuth2ProviderKind,
+        exchange: &OAuth2Exchange,
         token: &str,
         nonce: &str,
+        jwks: &JwksManager<ReqwestJwksFetcher>,
     ) -> Result<serde_json::Map<String, Value>, String> {
-        let runtime = self
-            .provider_config(provider)
-            .map_err(|_| "Provider unavailable")?;
-        let config = runtime.generic.as_ref().ok_or("Not a generic provider")?;
+        let config = self
+            .generic_config(&exchange.provider)
+            .ok_or("Provider unavailable")?;
         let header = jsonwebtoken::decode_header(token).map_err(|_| "Invalid identity token")?;
         if header.alg != jsonwebtoken::Algorithm::RS256 {
             return Err("Unsupported ID token algorithm".into());
         }
         let kid = header.kid.ok_or("ID token missing key ID")?;
-        let jwks_url = runtime
+        let jwks_url = exchange
             .jwks_url
             .as_deref()
             .ok_or("Provider missing JWKS URL")?;
-        let key = self
-            .jwks
-            .decoding_key(&format!("{}|{}", config.issuer, jwks_url), jwks_url, &kid)
+        let key = jwks
+            .decoding_key(&config.issuer, jwks_url, &kid)
             .await
             .map_err(|_| "Cannot resolve identity signing key")?;
         generic::verify_claims(token, &key, config, nonce)
@@ -221,33 +215,77 @@ impl OAuth2Service {
 
     /// Return registered provider identifiers.
     pub fn providers(&self) -> impl Iterator<Item = OAuth2ProviderKind> + '_ {
-        self.providers.keys().cloned()
+        self.providers.keys().cloned().chain(
+            self.settings
+                .providers
+                .iter()
+                .filter(|cfg| cfg.enabled)
+                .map(|cfg| OAuth2ProviderKind::Custom(cfg.id.clone())),
+        )
     }
 
     pub fn export_state(&self, state: &str) -> Option<OAuthStateExport> {
         self.state_store.export(state)
     }
 
-    fn provider_config(
-        &self,
-        provider: &OAuth2ProviderKind,
-    ) -> Result<&OAuth2ProviderRuntime, OAuth2ServiceError> {
-        self.providers
-            .get(provider)
-            .ok_or_else(|| OAuth2ServiceError::ProviderNotConfigured(provider.clone()))
+    fn generic_config(&self, provider: &OAuth2ProviderKind) -> Option<&OAuth2GenericConfig> {
+        let OAuth2ProviderKind::Custom(id) = provider else {
+            return None;
+        };
+        self.settings
+            .providers
+            .iter()
+            .find(|cfg| cfg.enabled && cfg.id == *id)
     }
 
-    /// Start authorization with PKCE and a nonce for generic clients.
-    /// Returns an error for unknown providers or invalid callback URLs.
-    pub fn begin_authorization(
+    async fn resolve_provider(
+        &self,
+        provider: &OAuth2ProviderKind,
+        discovered: Option<OAuth2GenericEndpoints>,
+    ) -> Result<OAuth2ProviderRuntime, OAuth2ServiceError> {
+        let Some(config) = self.generic_config(provider) else {
+            return self
+                .providers
+                .get(provider)
+                .cloned()
+                .ok_or_else(|| OAuth2ServiceError::ProviderNotConfigured(provider.clone()));
+        };
+        let endpoints = match (&config.endpoints, discovered) {
+            (Some(endpoints), _) => endpoints.clone(),
+            (None, Some(endpoints)) => {
+                endpoints
+                    .validate()
+                    .map_err(|_| OAuth2ServiceError::InvalidState)?;
+                endpoints
+            }
+            (None, None) => generic::discover(config, &self.http_client)
+                .await
+                .map_err(OAuth2ServiceError::DiscoveryFailed)?,
+        };
+        generic::runtime(config, &self.settings, endpoints)
+            .map_err(OAuth2ServiceError::ClientConstruction)
+    }
+
+    /// Resolve the provider for this sign-in and start authorization with PKCE and a nonce.
+    /// Returns an error for unknown providers, discovery failures, or invalid callback URLs.
+    pub async fn begin_authorization(
         &self,
         provider: OAuth2ProviderKind,
         base_url: Option<&str>,
         redirect: Option<String>,
     ) -> Result<AuthorizationRedirect, OAuth2ServiceError> {
-        let runtime = self.provider_config(&provider)?;
+        let runtime = self.resolve_provider(&provider, None).await?;
+        self.authorization_redirect(runtime, base_url, redirect)
+    }
+
+    fn authorization_redirect(
+        &self,
+        runtime: OAuth2ProviderRuntime,
+        base_url: Option<&str>,
+        redirect: Option<String>,
+    ) -> Result<AuthorizationRedirect, OAuth2ServiceError> {
         let redirect_url = self
-            .build_redirect_url(runtime, base_url)
+            .build_redirect_url(&runtime, base_url)
             .map_err(OAuth2ServiceError::InvalidRedirectUrl)?;
 
         let client = runtime.client.clone().set_redirect_uri(
@@ -275,13 +313,19 @@ impl OAuth2Service {
             .map_err(OAuth2ServiceError::ClientConstruction)?;
         let (auth_url, csrf_token) = request.set_pkce_challenge(pkce_challenge).url();
 
+        let discovered_endpoints = runtime
+            .generic
+            .as_ref()
+            .filter(|config| config.endpoints.is_none())
+            .and(runtime.endpoints);
         self.save_state(
             csrf_token.secret(),
             OAuthStateValue {
-                provider: provider.clone(),
+                provider: runtime.provider.clone(),
                 nonce,
                 callback_uri: Some(redirect_url.to_string()),
                 config_fingerprint: fingerprint,
+                discovered_endpoints,
                 pkce_verifier,
                 redirect,
                 created_at: Instant::now(),
@@ -289,7 +333,7 @@ impl OAuth2Service {
         );
 
         Ok(AuthorizationRedirect {
-            provider,
+            provider: runtime.provider,
             authorization_url: auth_url,
             state: csrf_token.secret().to_string(),
         })
@@ -316,6 +360,7 @@ impl OAuth2Service {
                 nonce: state_value.nonce,
                 callback_uri: state_value.callback_uri,
                 config_fingerprint: state_value.config_fingerprint,
+                discovered_endpoints: state_value.discovered_endpoints,
             },
         )
         .await
@@ -336,15 +381,18 @@ impl OAuth2Service {
             nonce,
             callback_uri,
             config_fingerprint,
+            discovered_endpoints,
         } = export;
-        let runtime = self.provider_config(&provider)?;
+        let runtime = self
+            .resolve_provider(&provider, discovered_endpoints)
+            .await?;
         let redirect_url = self
-            .build_redirect_url(runtime, base_url)
+            .build_redirect_url(&runtime, base_url)
             .map_err(OAuth2ServiceError::InvalidRedirectUrl)?;
 
         let saved_uri = callback_uri.as_deref().unwrap_or(redirect_url.as_str());
         validate_export(
-            runtime,
+            &runtime,
             redirect_url.as_str(),
             callback_uri.as_deref(),
             nonce.as_deref(),
@@ -375,6 +423,7 @@ impl OAuth2Service {
             token_response,
             redirect,
             nonce,
+            jwks_url: runtime.endpoints.map(|endpoints| endpoints.jwks_url),
         })
     }
 
@@ -426,6 +475,7 @@ pub struct OAuth2Exchange {
     pub token_response: OAuthTokenResponse,
     pub redirect: Option<String>,
     pub nonce: Option<String>,
+    jwks_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -436,6 +486,7 @@ pub struct OAuthStateExport {
     pub nonce: Option<String>,
     pub callback_uri: Option<String>,
     pub config_fingerprint: Option<String>,
+    pub discovered_endpoints: Option<OAuth2GenericEndpoints>,
 }
 
 #[derive(Default)]
@@ -466,6 +517,7 @@ impl OAuthStateStore {
             nonce: value.nonce.clone(),
             callback_uri: value.callback_uri.clone(),
             config_fingerprint: value.config_fingerprint.clone(),
+            discovered_endpoints: value.discovered_endpoints.clone(),
         })
     }
 }
@@ -482,6 +534,7 @@ struct OAuthStateValue {
     nonce: Option<String>,
     callback_uri: Option<String>,
     config_fingerprint: Option<String>,
+    discovered_endpoints: Option<OAuth2GenericEndpoints>,
     created_at: Instant,
 }
 
@@ -492,8 +545,8 @@ struct OAuth2ProviderRuntime {
     scopes: Vec<String>,
     redirect_path: String,
     display_name: String,
-    generic: Option<crate::app::config::OAuth2GenericConfig>,
-    jwks_url: Option<String>,
+    generic: Option<OAuth2GenericConfig>,
+    endpoints: Option<OAuth2GenericEndpoints>,
 }
 
 impl OAuth2ProviderRuntime {
@@ -517,7 +570,7 @@ impl OAuth2ProviderRuntime {
             provider: OAuth2ProviderKind::Google,
             display_name: "Google".into(),
             generic: None,
-            jwks_url: None,
+            endpoints: None,
             client,
             scopes: normalize_scopes(&config.scopes),
             redirect_path,
@@ -552,7 +605,7 @@ impl OAuth2ProviderRuntime {
             provider: OAuth2ProviderKind::Microsoft,
             display_name: "Microsoft".into(),
             generic: None,
-            jwks_url: None,
+            endpoints: None,
             client,
             scopes: normalize_scopes(&config.scopes),
             redirect_path,
