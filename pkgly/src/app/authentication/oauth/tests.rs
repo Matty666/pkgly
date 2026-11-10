@@ -142,7 +142,12 @@ async fn generic_oidc_rejects_missing_nonce_and_removed_provider_before_exchange
         assert!(
             matches!(
                 service
-                    .exchange_code_with_export(None, AuthorizationCode::new("code".into()), invalid)
+                    .exchange_code_with_export(
+                        None,
+                        AuthorizationCode::new("code".into()),
+                        invalid,
+                        None
+                    )
                     .await,
                 Err(OAuth2ServiceError::InvalidState)
             ),
@@ -152,7 +157,7 @@ async fn generic_oidc_rejects_missing_nonce_and_removed_provider_before_exchange
     let removed = OAuth2Service::new(google_settings()).unwrap().unwrap();
     assert!(matches!(
         removed
-            .exchange_code_with_export(None, AuthorizationCode::new("code".into()), snapshot)
+            .exchange_code_with_export(None, AuthorizationCode::new("code".into()), snapshot, None)
             .await,
         Err(OAuth2ServiceError::ProviderNotConfigured(_))
     ));

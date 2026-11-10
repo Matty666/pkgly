@@ -601,11 +601,14 @@ impl Pkgly {
 
         if let Some(cfg) = settings.clone() {
             if cfg.enabled {
-                let service = OAuth2Service::new(cfg.clone())
+                let mut service = OAuth2Service::new(cfg.clone())
                     .map_err(|err| anyhow!("Failed to initialize OAuth2 service: {err}"))?
                     .ok_or_else(|| {
                         anyhow!("OAuth2 configuration is missing provider credentials")
                     })?;
+                if let Some(previous) = self.oauth2_service() {
+                    service.preserve_pending_logins(&previous);
+                }
                 new_service = Some(Arc::new(service));
 
                 if let Some(casbin_cfg) = cfg.casbin.as_ref() {

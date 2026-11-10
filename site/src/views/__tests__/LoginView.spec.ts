@@ -18,6 +18,7 @@ const mockRouter = {
 
 const httpPost = vi.fn();
 const mockSiteInfo: Record<string, unknown> = {};
+const mockQuery: Record<string, string> = {};
 
 vi.mock("@/http", () => ({
   default: {
@@ -49,7 +50,7 @@ vi.mock("vue-router", async () => {
   return {
     ...actual,
     useRoute: () => ({
-      query: {},
+      query: mockQuery,
     }),
   };
 });
@@ -107,6 +108,7 @@ describe("LoginView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     for (const key of Object.keys(mockSiteInfo)) delete mockSiteInfo[key];
+    for (const key of Object.keys(mockQuery)) delete mockQuery[key];
   });
 
   it("uses configured labels for two arbitrary OIDC providers", async () => {
@@ -120,6 +122,15 @@ describe("LoginView", () => {
     expect(wrapper.text()).toContain("Sign in with Company sign-in");
     expect(wrapper.text()).toContain("Sign in with Partner access");
     expect(wrapper.get("#login-username").exists()).toBe(true);
+  });
+
+  it("shows how to retry an interrupted OIDC sign-in", async () => {
+    mockQuery.oauth_error = "discovery_state_missing";
+    const wrapper = await mountLogin();
+
+    expect(wrapper.get('[data-testid="login-inline-alert"]').text()).toContain(
+      "Your sign-in attempt expired. Please try again.",
+    );
   });
 
   it("shows the inline login error without triggering a global alert on 401", async () => {
