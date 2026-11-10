@@ -57,12 +57,13 @@ This release supports confidential clients with `client_secret_basic` or `client
 Scopes must include `openid`. Public clients, encrypted ID tokens, UserInfo, and custom identity claim names are unsupported.
 Configure providers to return the required standard identity claims in the ID token.
 
-Pkgly discovers metadata from `<issuer>/.well-known/openid-configuration` during startup and settings updates.
+When a user selects a provider, Pkgly fetches metadata from `<issuer>/.well-known/openid-configuration`.
+Each new sign-in fetches its own metadata. Startup and settings saves check local configuration without contacting the issuer.
 The discovered issuer must match the configured issuer exactly, including its path and trailing slash.
 Discovery must advertise the authorization-code flow, RS256, and the configured client authentication method.
 Omitted authentication methods default to `client_secret_basic`.
 
-For providers without discovery, supply the complete endpoint block:
+To skip discovery, supply all three URLs under **Explicit endpoints** or use the complete configuration block:
 
 ```toml
 [security.oauth2.providers.endpoints]
@@ -76,9 +77,11 @@ Issuer and endpoint URLs require HTTPS without embedded credentials or fragments
 Discovery and token requests have a ten-second timeout. Signing-key requests have a five-second timeout.
 Token requests do not follow redirects. Private destinations need explicit exceptions in `security.egress`.
 
+If discovery fails, the provider button stays visible. That sign-in returns HTTP 503. The user can return to the login page and try again.
 A failed settings update retains the previous settings and clients.
-If initialization fails at startup, OAuth2 login buttons are unavailable. Password login remains available.
-Use static endpoints when discovery availability is unsuitable for startup.
+Pkgly saves the discovered endpoints with the one-time login state so the callback uses the same URLs.
+Each callback that verifies an ID token fetches the provider's signing keys, even with explicit endpoints.
+Subsequent requests use the Pkgly session.
 
 ## Login checks and account matching
 

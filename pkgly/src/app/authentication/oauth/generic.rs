@@ -1,18 +1,14 @@
 use super::*;
-use crate::app::config::{OAuth2GenericConfig, OAuth2GenericEndpoints, validate_oidc_url};
+use crate::app::config::validate_oidc_url;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde_json::{Map, json};
 use sha2::{Digest, Sha256};
 
-pub(super) async fn runtime(
+pub(super) fn runtime(
     config: &OAuth2GenericConfig,
     settings: &OAuth2Settings,
-    client: &HttpClient,
+    endpoints: OAuth2GenericEndpoints,
 ) -> Result<OAuth2ProviderRuntime, String> {
-    let endpoints = match &config.endpoints {
-        Some(endpoints) => endpoints.clone(),
-        None => discover(config, client).await?,
-    };
     let auth_type = match config.token_endpoint_auth_method.as_str() {
         "client_secret_basic" => oauth2::AuthType::BasicAuth,
         "client_secret_post" => oauth2::AuthType::RequestBody,
@@ -22,9 +18,12 @@ pub(super) async fn runtime(
         .set_client_secret(ClientSecret::new(config.client_secret.clone()))
         .set_auth_type(auth_type)
         .set_auth_uri(
-            AuthUrl::new(endpoints.authorization_url).map_err(|_| "Invalid authorization URL")?,
+            AuthUrl::new(endpoints.authorization_url.clone())
+                .map_err(|_| "Invalid authorization URL")?,
         )
-        .set_token_uri(TokenUrl::new(endpoints.token_url).map_err(|_| "Invalid token URL")?);
+        .set_token_uri(
+            TokenUrl::new(endpoints.token_url.clone()).map_err(|_| "Invalid token URL")?,
+        );
     Ok(OAuth2ProviderRuntime {
         provider: OAuth2ProviderKind::Custom(config.id.clone()),
         client,
@@ -35,11 +34,11 @@ pub(super) async fn runtime(
             .unwrap_or_else(|| settings.callback_path.clone()),
         display_name: config.display_name.clone(),
         generic: Some(config.clone()),
-        jwks_url: Some(endpoints.jwks_url),
+        endpoints: Some(endpoints),
     })
 }
 
-async fn discover(
+pub(super) async fn discover(
     config: &OAuth2GenericConfig,
     client: &HttpClient,
 ) -> Result<OAuth2GenericEndpoints, String> {
