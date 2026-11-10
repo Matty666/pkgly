@@ -74,6 +74,8 @@ pub enum OAuth2ServiceError {
     ClientConstruction(String),
     #[error("OIDC discovery failed: {0}")]
     DiscoveryFailed(String),
+    #[error("OIDC sign-in endpoints are no longer available")]
+    DiscoveryStateMissing,
     #[error("OAuth2 token request failed: {0}")]
     TokenRequestFailed(String),
 }
@@ -203,9 +205,14 @@ impl OAuth2Service {
         self.state_store.insert(state.to_owned(), value);
     }
 
-    /// Remove the in-memory snapshot after authoritative database consumption.
-    pub fn forget_state(&self, state: &str) {
-        self.state_store.take(state);
+    /// Take the in-memory endpoints after the database consumes the login state.
+    pub fn take_discovered_endpoints(&self, state: &str) -> Option<OAuth2GenericEndpoints> {
+        self.state_store.take(state)?.discovered_endpoints
+    }
+
+    /// Keep active sign-ins across settings saves. Callback checks reject provider changes.
+    pub(in crate::app) fn preserve_pending_logins(&mut self, previous: &Self) {
+        self.state_store = Arc::clone(&previous.state_store);
     }
 
     /// Return the settings associated with this runtime.
@@ -238,7 +245,7 @@ impl OAuth2Service {
             .find(|cfg| cfg.enabled && cfg.id == *id)
     }
 
-    async fn resolve_provider(
+    fn resolve_provider(
         &self,
         provider: &OAuth2ProviderKind,
         discovered: Option<OAuth2GenericEndpoints>,
@@ -250,18 +257,11 @@ impl OAuth2Service {
                 .cloned()
                 .ok_or_else(|| OAuth2ServiceError::ProviderNotConfigured(provider.clone()));
         };
-        let endpoints = match (&config.endpoints, discovered) {
-            (Some(endpoints), _) => endpoints.clone(),
-            (None, Some(endpoints)) => {
-                endpoints
-                    .validate()
-                    .map_err(|_| OAuth2ServiceError::InvalidState)?;
-                endpoints
-            }
-            (None, None) => generic::discover(config, &self.http_client)
-                .await
-                .map_err(OAuth2ServiceError::DiscoveryFailed)?,
-        };
+        let endpoints = config
+            .endpoints
+            .clone()
+            .or(discovered)
+            .ok_or(OAuth2ServiceError::DiscoveryStateMissing)?;
         generic::runtime(config, &self.settings, endpoints)
             .map_err(OAuth2ServiceError::ClientConstruction)
     }
@@ -274,7 +274,18 @@ impl OAuth2Service {
         base_url: Option<&str>,
         redirect: Option<String>,
     ) -> Result<AuthorizationRedirect, OAuth2ServiceError> {
-        let runtime = self.resolve_provider(&provider, None).await?;
+        let discovered = if let Some(config) = self.generic_config(&provider)
+            && config.endpoints.is_none()
+        {
+            Some(
+                generic::discover(config, &self.http_client)
+                    .await
+                    .map_err(OAuth2ServiceError::DiscoveryFailed)?,
+            )
+        } else {
+            None
+        };
+        let runtime = self.resolve_provider(&provider, discovered)?;
         self.authorization_redirect(runtime, base_url, redirect)
     }
 
@@ -360,19 +371,20 @@ impl OAuth2Service {
                 nonce: state_value.nonce,
                 callback_uri: state_value.callback_uri,
                 config_fingerprint: state_value.config_fingerprint,
-                discovered_endpoints: state_value.discovered_endpoints,
             },
+            state_value.discovered_endpoints,
         )
         .await
     }
 
     /// Exchange a code after the caller atomically consumes persisted state.
-    /// Returns an error for configuration changes or failed token exchange.
+    /// Returns an error for missing endpoints, configuration changes, or failed token exchange.
     pub async fn exchange_code_with_export(
         &self,
         base_url: Option<&str>,
         code: AuthorizationCode,
         export: OAuthStateExport,
+        discovered_endpoints: Option<OAuth2GenericEndpoints>,
     ) -> Result<OAuth2Exchange, OAuth2ServiceError> {
         let OAuthStateExport {
             provider,
@@ -381,11 +393,8 @@ impl OAuth2Service {
             nonce,
             callback_uri,
             config_fingerprint,
-            discovered_endpoints,
         } = export;
-        let runtime = self
-            .resolve_provider(&provider, discovered_endpoints)
-            .await?;
+        let runtime = self.resolve_provider(&provider, discovered_endpoints)?;
         let redirect_url = self
             .build_redirect_url(&runtime, base_url)
             .map_err(OAuth2ServiceError::InvalidRedirectUrl)?;
@@ -486,7 +495,6 @@ pub struct OAuthStateExport {
     pub nonce: Option<String>,
     pub callback_uri: Option<String>,
     pub config_fingerprint: Option<String>,
-    pub discovered_endpoints: Option<OAuth2GenericEndpoints>,
 }
 
 #[derive(Default)]
@@ -517,7 +525,6 @@ impl OAuthStateStore {
             nonce: value.nonce.clone(),
             callback_uri: value.callback_uri.clone(),
             config_fingerprint: value.config_fingerprint.clone(),
-            discovered_endpoints: value.discovered_endpoints.clone(),
         })
     }
 }

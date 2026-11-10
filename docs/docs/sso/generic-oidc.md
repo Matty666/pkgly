@@ -57,13 +57,15 @@ This release supports confidential clients with `client_secret_basic` or `client
 Scopes must include `openid`. Public clients, encrypted ID tokens, UserInfo, and custom identity claim names are unsupported.
 Configure providers to return the required standard identity claims in the ID token.
 
-When a user selects a provider, Pkgly fetches metadata from `<issuer>/.well-known/openid-configuration`.
-Each new sign-in fetches its own metadata. Startup and settings saves check local configuration without contacting the issuer.
+Leave all three fields under **Explicit endpoints** blank to use discovery. Pkgly fetches the metadata when the user selects that provider. Each new sign-in makes a fresh request. Startup and settings saves check local configuration.
 The discovered issuer must match the configured issuer exactly, including its path and trailing slash.
 Discovery must advertise the authorization-code flow, RS256, and the configured client authentication method.
 Omitted authentication methods default to `client_secret_basic`.
 
-To skip discovery, supply all three URLs under **Explicit endpoints** or use the complete configuration block:
+To use explicit endpoints, supply all three URLs. Use the values from the provider's metadata. Set **Authorization URL** to `authorization_endpoint`, **Token URL** to `token_endpoint`, and **Signing key URL** to `jwks_uri`.
+The issuer is still required for ID-token verification. Pkgly uses the supplied URLs directly and skips discovery. Update them in Pkgly if the provider changes its URLs.
+
+The same fields are available in the configuration file:
 
 ```toml
 [security.oauth2.providers.endpoints]
@@ -79,16 +81,17 @@ Token requests do not follow redirects. Private destinations need explicit excep
 
 If discovery fails, the provider button stays visible. That sign-in returns HTTP 503. The user can return to the login page and try again.
 A failed settings update retains the previous settings and clients.
-Pkgly saves the discovered endpoints with the one-time login state so the callback uses the same URLs.
-Each callback that verifies an ID token fetches the provider's signing keys, even with explicit endpoints.
-Subsequent requests use the Pkgly session.
+
+With discovery, Pkgly holds the resolved URLs in memory for that sign-in. If Pkgly restarts before the callback, the login page asks the user to try again.
+With explicit endpoints, the callback can finish after a restart if its saved login state is still valid.
+Both modes fetch fresh signing keys when the callback verifies the ID token. Subsequent requests use the Pkgly session.
 
 ## Login checks and account matching
 
 Generic callbacks validate the signature, exact issuer, client audience, expiry, subject, issue time, and saved nonce.
 Only the registered RS256 algorithm is accepted. The audience can be a string or an array containing only the client ID.
 A present `azp` must equal the client ID. Clock tolerance is 30 seconds.
-Login state expires after five minutes. Database state survives a process restart and permits only one callback consumption.
+Login state expires after five minutes. Pkgly consumes the saved state once per callback.
 Relevant provider or callback changes reject pending logins. Start a new login after changing configuration.
 
 Pkgly preserves its existing account lookup:

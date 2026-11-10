@@ -182,6 +182,50 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     );
     discovery_online.store(true, Ordering::SeqCst);
 
+    let service = site.oauth2_service().unwrap();
+    let interrupted = service
+        .begin_authorization("company".parse().unwrap(), None, None)
+        .await
+        .unwrap();
+    let state = service.export_state(&interrupted.state).unwrap();
+    persist_oauth_state(&site, &interrupted.state, &state)
+        .await
+        .unwrap();
+    assert!(
+        service
+            .take_discovered_endpoints(&interrupted.state)
+            .is_some()
+    );
+    let discovery_before = discovery_requests.load(Ordering::SeqCst);
+    let interrupted_response = callback(
+        State(site.clone()),
+        Extension(AccessLogContext::default()),
+        ConnectInfo("127.0.0.1:1234".parse().unwrap()),
+        None,
+        Query(OAuthCallbackQuery {
+            code: Some("code".into()),
+            state: Some(interrupted.state.clone()),
+            error: None,
+            error_description: None,
+            redirect: None,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(interrupted_response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        interrupted_response.headers()[LOCATION],
+        "/login?oauth_error=discovery_state_missing"
+    );
+    assert!(requests.lock().is_empty());
+    assert_eq!(discovery_requests.load(Ordering::SeqCst), discovery_before);
+    assert!(
+        load_persisted_oauth_state(&site, &interrupted.state)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
     // Verified email wins over a different username. Missing/false verification uses the existing username fallback.
     for (verified, expected, inactive, method, provider_index) in [
         (Some(true), first, false, "client_secret_basic", 0),
@@ -211,11 +255,9 @@ async fn generic_oidc_database_login_state_and_account_policy() {
             .begin_authorization(provider_id.parse().unwrap(), None, Some("/browse".into()))
             .await
             .unwrap();
-        let mut snapshot = service.export_state(&auth.state).unwrap();
-        assert_eq!(snapshot.discovered_endpoints.is_some(), provider_index == 0);
-        let legacy_state = provider_index == 0 && verified.is_none();
-        if legacy_state {
-            snapshot.discovered_endpoints = None;
+        let snapshot = service.export_state(&auth.state).unwrap();
+        if provider_index == 1 {
+            assert!(service.take_discovered_endpoints(&auth.state).is_none());
         }
         persist_oauth_state(&site, &auth.state, &snapshot)
             .await
@@ -235,11 +277,11 @@ async fn generic_oidc_database_login_state_and_account_policy() {
             header.kid = Some("rotated-key".into());
         }
         *token.lock() = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
-        // Replace the runtime to exercise callback recovery from database state.
+        // A settings save keeps the pending discovery URLs in memory.
         site.update_oauth2_settings(Some(case_settings))
             .await
             .unwrap();
-        discovery_online.store(legacy_state, Ordering::SeqCst);
+        discovery_online.store(false, Ordering::SeqCst);
         let access = AccessLogContext::default();
         let response = callback(
             State(site.clone()),
@@ -260,7 +302,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(
             discovery_requests.load(Ordering::SeqCst),
-            discovery_before + usize::from(provider_index == 0) + usize::from(legacy_state)
+            discovery_before + usize::from(provider_index == 0)
         );
         assert_eq!(key_requests.load(Ordering::SeqCst), key_requests_before + 1);
         if inactive {
@@ -367,7 +409,12 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         .unwrap();
     assert!(matches!(
         replacement
-            .exchange_code_with_export(None, AuthorizationCode::new("code".into()), snapshot)
+            .exchange_code_with_export(
+                None,
+                AuthorizationCode::new("code".into()),
+                snapshot,
+                service.take_discovered_endpoints(&auth.state),
+            )
             .await,
         Err(OAuth2ServiceError::InvalidState)
     ));
