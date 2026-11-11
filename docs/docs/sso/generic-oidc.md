@@ -82,8 +82,8 @@ Token requests do not follow redirects. Private destinations need explicit excep
 If discovery fails, the provider button stays visible. That sign-in returns HTTP 503. The user can return to the login page and try again.
 A failed settings update retains the previous settings and clients.
 
-With discovery, Pkgly holds the resolved URLs in memory for that sign-in. If Pkgly restarts before the callback, the login page asks the user to try again.
-With explicit endpoints, the callback can finish after a restart if its saved login state is still valid.
+With discovery, Pkgly saves the resolved URLs on the one-time login record. A callback can reuse them after a Pkgly restart while that record is valid. Each new sign-in runs discovery again.
+With explicit endpoints, the callback uses the configured URLs. The login record needs no discovered URLs.
 Both modes fetch fresh signing keys when the callback verifies the ID token. Subsequent requests use the Pkgly session.
 
 ## Login checks and account matching
@@ -91,7 +91,8 @@ Both modes fetch fresh signing keys when the callback verifies the ID token. Sub
 Generic callbacks validate the signature, exact issuer, client audience, expiry, subject, issue time, and saved nonce.
 Only the registered RS256 algorithm is accepted. The audience can be a string or an array containing only the client ID.
 A present `azp` must equal the client ID. Clock tolerance is 30 seconds.
-Login state expires after five minutes. Pkgly consumes the saved state once per callback.
+Login state is valid for five minutes. Pkgly deletes the row atomically before exchanging the authorization code.
+When Pkgly saves a new OAuth login attempt, it also deletes unused rows older than 15 minutes.
 Relevant provider or callback changes reject pending logins. Start a new login after changing configuration.
 
 Pkgly preserves its existing account lookup:
