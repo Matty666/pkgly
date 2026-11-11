@@ -112,6 +112,7 @@ fn generic_oidc_persisted_state_expiry_and_legacy_rows() {
         nonce: None,
         callback_uri: None,
         config_fingerprint: None,
+        discovered_endpoints: None,
     };
     assert!(!legacy.is_expired());
     assert_eq!(
@@ -126,6 +127,7 @@ fn generic_oidc_persisted_state_expiry_and_legacy_rows() {
         nonce: Some("nonce".into()),
         callback_uri: None,
         config_fingerprint: None,
+        discovered_endpoints: None,
     };
     assert!(expired.is_expired());
 }

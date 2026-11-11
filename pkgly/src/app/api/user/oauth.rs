@@ -3,7 +3,7 @@
 use std::{io, net::SocketAddr, str::FromStr};
 
 use crate::app::authentication::jwks::{JwksManager, ReqwestJwksFetcher};
-use crate::app::config::{OidcProviderConfig, TokenSource};
+use crate::app::config::{OAuth2GenericEndpoints, OidcProviderConfig, TokenSource};
 use axum::{
     extract::{ConnectInfo, Extension, Path, Query, State},
     http::{
@@ -97,6 +97,7 @@ struct PersistedOAuthState {
     nonce: Option<String>,
     callback_uri: Option<String>,
     config_fingerprint: Option<String>,
+    discovered_endpoints: Option<OAuth2GenericEndpoints>,
 }
 
 impl PersistedOAuthState {
@@ -115,6 +116,7 @@ impl PersistedOAuthState {
             nonce: self.nonce,
             callback_uri: self.callback_uri,
             config_fingerprint: self.config_fingerprint,
+            discovered_endpoints: self.discovered_endpoints,
         })
     }
 }
@@ -277,7 +279,7 @@ pub async fn callback(
             OAuth2ServiceError::InvalidState,
         ));
     };
-    let discovered_endpoints = service.take_discovered_endpoints(state);
+    service.forget_state(state);
     if persisted.is_expired() {
         return Ok(oauth_service_error_response(
             OAuth2ServiceError::InvalidState,
@@ -292,7 +294,6 @@ pub async fn callback(
             base_url.as_deref(),
             AuthorizationCode::new(code.clone()),
             export,
-            discovered_endpoints,
         )
         .await
     {
@@ -596,13 +597,16 @@ async fn persist_oauth_state(
     prune_persisted_oauth_states(site).await?;
     sqlx::query(
         r#"
-        INSERT INTO oauth2_states (state, provider, pkce_verifier, redirect, nonce, callback_uri, config_fingerprint)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO oauth2_states (state, provider, pkce_verifier, redirect, nonce, callback_uri,
+                                   config_fingerprint, discovered_endpoints)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (state) DO UPDATE
         SET provider = EXCLUDED.provider,
             pkce_verifier = EXCLUDED.pkce_verifier,
             redirect = EXCLUDED.redirect,
-            nonce = EXCLUDED.nonce, callback_uri = EXCLUDED.callback_uri, config_fingerprint = EXCLUDED.config_fingerprint,
+            nonce = EXCLUDED.nonce, callback_uri = EXCLUDED.callback_uri,
+            config_fingerprint = EXCLUDED.config_fingerprint,
+            discovered_endpoints = EXCLUDED.discovered_endpoints,
             created_at = NOW()
         "#,
     )
@@ -613,6 +617,12 @@ async fn persist_oauth_state(
     .bind(snapshot.nonce.as_deref())
     .bind(snapshot.callback_uri.as_deref())
     .bind(snapshot.config_fingerprint.as_deref())
+    .bind(
+        snapshot
+            .discovered_endpoints
+            .as_ref()
+            .map(sqlx::types::Json),
+    )
     .execute(&site.database)
     .await?;
     Ok(())
@@ -626,14 +636,18 @@ async fn load_persisted_oauth_state(
         r#"
         DELETE FROM oauth2_states
         WHERE state = $1
-        RETURNING provider, pkce_verifier, redirect, created_at, nonce, callback_uri, config_fingerprint
+        RETURNING provider, pkce_verifier, redirect, created_at, nonce, callback_uri,
+                  config_fingerprint, discovered_endpoints
         "#,
     )
     .bind(state)
     .fetch_optional(&site.database)
     .await?;
 
-    Ok(row.map(|record| PersistedOAuthState {
+    let Some(record) = row else {
+        return Ok(None);
+    };
+    Ok(Some(PersistedOAuthState {
         provider: record.get::<String, _>("provider"),
         pkce_verifier: record.get::<String, _>("pkce_verifier"),
         redirect: record.get::<Option<String>, _>("redirect"),
@@ -641,6 +655,11 @@ async fn load_persisted_oauth_state(
         nonce: record.get("nonce"),
         callback_uri: record.get("callback_uri"),
         config_fingerprint: record.get("config_fingerprint"),
+        discovered_endpoints: record
+            .try_get::<Option<sqlx::types::Json<OAuth2GenericEndpoints>>, _>(
+                "discovered_endpoints",
+            )?
+            .map(|endpoints| endpoints.0),
     }))
 }
 

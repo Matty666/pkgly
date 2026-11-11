@@ -10,7 +10,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
-use testcontainers::{clients::Cli, images::generic::GenericImage};
+use testcontainers::{Container, clients::Cli, images::generic::GenericImage};
 
 async fn test_site(port: u16, root: &std::path::Path) -> Pkgly {
     Pkgly::new(
@@ -53,10 +53,7 @@ async fn user(site: &Pkgly, username: &str, email: &str) -> i32 {
     .id
 }
 
-#[tokio::test]
-async fn generic_oidc_database_login_state_and_account_policy() {
-    let _lock = crate::test_support::DB_TEST_LOCK.lock().await;
-    let docker = Cli::default();
+async fn start_postgres(docker: &Cli) -> (Container<'_, GenericImage>, u16) {
     let container = docker.run(
         GenericImage::new("postgres", "18-alpine")
             .with_env_var("POSTGRES_PASSWORD", "password")
@@ -72,6 +69,68 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         assert!(attempt < 59, "postgres failed to start");
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
+    (container, port)
+}
+
+#[tokio::test]
+async fn oauth_login_prunes_only_state_older_than_fifteen_minutes() {
+    let _lock = crate::test_support::DB_TEST_LOCK.lock().await;
+    let docker = Cli::default();
+    let (_container, port) = start_postgres(&docker).await;
+    let root = tempfile::tempdir().unwrap();
+    let site = test_site(port, root.path()).await;
+    let settings = serde_json::from_value(json!({
+        "enabled": true,
+        "redirect_base_url": "https://pkgly.example",
+        "google": {"client_id": "fixture", "client_secret": "fixture"}
+    }))
+    .unwrap();
+    site.update_oauth2_settings(Some(settings)).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO oauth2_states (state, provider, pkce_verifier, created_at)
+         VALUES ('abandoned', 'google', 'fixture', NOW() - INTERVAL '16 minutes'),
+                ('recently-expired', 'google', 'fixture', NOW() - INTERVAL '14 minutes'),
+                ('active', 'google', 'fixture', NOW() - INTERVAL '1 minute')",
+    )
+    .execute(&site.database)
+    .await
+    .unwrap();
+
+    let response = authorize(
+        State(site.clone()),
+        Path("google".into()),
+        Query(OAuthAuthorizeQuery { redirect: None }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = url::Url::parse(response.headers()[LOCATION].to_str().unwrap()).unwrap();
+    let new_state = location
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    let mut states = sqlx::query_scalar::<_, String>("SELECT state FROM oauth2_states")
+        .fetch_all(&site.database)
+        .await
+        .unwrap();
+    let mut expected = [
+        "active".to_owned(),
+        "recently-expired".to_owned(),
+        new_state,
+    ];
+    states.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(states, expected);
+}
+
+#[tokio::test]
+async fn generic_oidc_database_login_state_and_account_policy() {
+    let _lock = crate::test_support::DB_TEST_LOCK.lock().await;
+    let docker = Cli::default();
+    let (_container, port) = start_postgres(&docker).await;
     let root = tempfile::tempdir().unwrap();
     let site = test_site(port, root.path()).await;
     let first = user(&site, "first", "first@example.com").await;
@@ -187,15 +246,12 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         .begin_authorization("company".parse().unwrap(), None, None)
         .await
         .unwrap();
-    let state = service.export_state(&interrupted.state).unwrap();
+    let mut state = service.export_state(&interrupted.state).unwrap();
+    state.discovered_endpoints = None;
     persist_oauth_state(&site, &interrupted.state, &state)
         .await
         .unwrap();
-    assert!(
-        service
-            .take_discovered_endpoints(&interrupted.state)
-            .is_some()
-    );
+    service.forget_state(&interrupted.state);
     let discovery_before = discovery_requests.load(Ordering::SeqCst);
     let interrupted_response = callback(
         State(site.clone()),
@@ -256,9 +312,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
             .await
             .unwrap();
         let snapshot = service.export_state(&auth.state).unwrap();
-        if provider_index == 1 {
-            assert!(service.take_discovered_endpoints(&auth.state).is_none());
-        }
+        assert_eq!(snapshot.discovered_endpoints.is_some(), provider_index == 0);
         persist_oauth_state(&site, &auth.state, &snapshot)
             .await
             .unwrap();
@@ -277,14 +331,17 @@ async fn generic_oidc_database_login_state_and_account_policy() {
             header.kid = Some("rotated-key".into());
         }
         *token.lock() = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
-        // A settings save keeps the pending discovery URLs in memory.
-        site.update_oauth2_settings(Some(case_settings))
-            .await
-            .unwrap();
+        // A new application instance has the database state and an empty memory store.
         discovery_online.store(false, Ordering::SeqCst);
+        let callback_root = tempfile::tempdir().unwrap();
+        let callback_site = if verified == Some(true) && !inactive {
+            test_site(port, callback_root.path()).await
+        } else {
+            site.clone()
+        };
         let access = AccessLogContext::default();
         let response = callback(
-            State(site.clone()),
+            State(callback_site),
             Extension(access.clone()),
             ConnectInfo("127.0.0.1:1234".parse().unwrap()),
             None,
@@ -409,12 +466,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         .unwrap();
     assert!(matches!(
         replacement
-            .exchange_code_with_export(
-                None,
-                AuthorizationCode::new("code".into()),
-                snapshot,
-                service.take_discovered_endpoints(&auth.state),
-            )
+            .exchange_code_with_export(None, AuthorizationCode::new("code".into()), snapshot,)
             .await,
         Err(OAuth2ServiceError::InvalidState)
     ));
