@@ -750,18 +750,35 @@ fn merge_generic_settings(
         .into_iter()
         .map(|req| {
             let mut config = req.config;
-            config.client_secret = match req.client_secret {
-                Some(secret) if secret.trim().is_empty() => {
+            let saved = current
+                .and_then(|cfg| cfg.providers.iter().find(|old| old.id == config.id))
+                .filter(|old| !old.client_secret.is_empty());
+            config.client_secret = match (req.client_secret, saved) {
+                (Some(secret), _) if secret.trim().is_empty() => {
                     return Err("OIDC client secret cannot be empty".into());
                 }
-                Some(secret) => secret,
-                None => current
-                    .and_then(|cfg| cfg.providers.iter().find(|old| old.id == config.id))
-                    .map(|old| old.client_secret.clone())
-                    .unwrap_or_default(),
+                (Some(secret), _) => secret,
+                (None, Some(old))
+                    if generic_credential_binding(old) != generic_credential_binding(&config) =>
+                {
+                    return Err(
+                        "Re-enter the OIDC client secret when the token URL, issuer, or client ID changes."
+                            .into(),
+                    );
+                }
+                (None, Some(old)) => old.client_secret.clone(),
+                (None, None) => String::new(),
             };
             config.validate()?;
             Ok(config)
         })
         .collect()
+}
+
+fn generic_credential_binding(config: &OAuth2GenericConfig) -> (&str, &str, Option<&str>) {
+    let token_url = config
+        .endpoints
+        .as_ref()
+        .map(|endpoints| endpoints.token_url.as_str());
+    (&config.issuer, &config.client_id, token_url)
 }

@@ -11,6 +11,7 @@ import type {
   OAuth2CasbinConfig,
   OAuth2Configuration,
   OAuth2GenericEndpoints,
+  OAuth2GenericProvider,
   OAuth2GroupRoleMapping,
   OAuth2ProviderKind,
   OidcProviderConfig,
@@ -134,6 +135,7 @@ const oauthLoading = ref(true);
 const oauthSaving = ref(false);
 const discoveringProviders = ref(new Set<string>());
 const oauthForm = ref<EditableOAuthConfiguration>(defaultOAuthForm());
+const savedGenericProviders = ref<OAuth2GenericProvider[]>([]);
 const oauthInitialSignature = ref(JSON.stringify(oauthForm.value));
 const availableRoles = ref<string[]>([]);
 const roleOptionsId = "pkgly-role-options";
@@ -230,6 +232,7 @@ async function fetchOAuthSettings() {
   try {
     const response = await http.get<OAuth2Configuration>("/api/security/oauth2");
     oauthForm.value = toOAuthEditable(response.data);
+    savedGenericProviders.value = response.data.providers ?? [];
     oauthInitialSignature.value = JSON.stringify(oauthForm.value);
     availableRoles.value = response.data.available_roles ?? [];
   } catch (error) {
@@ -337,6 +340,16 @@ async function discoverGenericEndpoints(provider: EditableGenericProvider) {
   }
 }
 
+function mustReenterGenericSecret(provider: EditableGenericProvider): boolean {
+  const saved = savedGenericProviders.value.find((item) => item.id === provider.id.trim());
+  return (
+    saved?.client_secret_configured === true &&
+    (saved.issuer !== provider.issuer.trim() ||
+      saved.client_id !== provider.client_id.trim() ||
+      (saved.endpoints?.token_url ?? "") !== provider.token_url.trim())
+  );
+}
+
 async function saveOAuthSettings() {
   if (oauthSaving.value || discoveringProviders.value.size) {
     return;
@@ -386,6 +399,18 @@ async function saveOAuthSettings() {
     return;
   }
 
+  if (
+    oauthForm.value.providers.some(
+      (provider) => mustReenterGenericSecret(provider) && !provider.client_secret.trim(),
+    )
+  ) {
+    showError(
+      "OIDC client secret required",
+      "Re-enter the client secret when the token URL, issuer, or client ID changes.",
+    );
+    return;
+  }
+
   oauthSaving.value = true;
   const payload = toOAuthPayload(oauthForm.value);
 
@@ -400,7 +425,6 @@ async function saveOAuthSettings() {
       "Unable to save OAuth2 settings",
       "Check the server logs for more details.",
     );
-    console.error(resolved.debugMessage);
     showError(resolved.title, resolved.message);
   } finally {
     oauthSaving.value = false;
@@ -1283,9 +1307,11 @@ function removeOidcProvider(id: string) {
                 v-model="provider.client_secret"
                 autocomplete="new-password"
                 :placeholder="
-                  provider.secretConfigured
-                    ? 'Leave blank to keep the current secret'
-                    : 'Client secret'
+                  mustReenterGenericSecret(provider)
+                    ? 'Re-enter the client secret'
+                    : provider.secretConfigured
+                      ? 'Leave blank to keep the current secret'
+                      : 'Client secret'
                 "
                 >Client secret</PasswordInput
               >

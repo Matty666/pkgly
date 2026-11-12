@@ -47,7 +47,9 @@ jwks_url = "https://identity.example.com/keys"
 
 Database settings saved through the admin API take priority over file settings at startup.
 Keep secrets outside source control. Admin responses return `client_secret_configured`, without the secret.
-A blank secret field in the editor retains the existing secret. The API uses an omitted or null secret for retention.
+A blank secret field retains the existing secret when the token URL, issuer, and client ID stay the same.
+If any of these values change, re-enter the secret before you save. You can use the same secret if it still applies.
+An omitted or null secret in an API request follows the same rule.
 An explicit empty secret is invalid. Changing the provider ID creates a new provider and requires new credentials.
 
 IDs accept lowercase letters, digits, hyphens, and underscores, with a maximum of 64 characters.

@@ -235,6 +235,60 @@ describe("AdminSystem.vue", () => {
     );
   });
 
+  it.each([
+    ["generic-token-url", "https://id.example/token-v2"],
+    ["generic-issuer", "https://issuer.example"],
+    ["generic-client-id", "different-client"],
+  ])("requires an explicit secret after changing %s", async (field, value) => {
+    const originalGet = httpGet.getMockImplementation()!;
+    httpGet.mockImplementation(async (url: string) => {
+      const response = await originalGet(url);
+      if (url === "/api/security/oauth2") {
+        response.data.enabled = true;
+        response.data.providers = [
+          {
+            id: "company",
+            display_name: "Company",
+            enabled: true,
+            issuer: "https://id.example",
+            client_id: "pkgly",
+            client_secret_configured: true,
+            scopes: ["openid"],
+            token_endpoint_auth_method: "client_secret_basic",
+            id_token_signing_alg: "RS256",
+            endpoints: {
+              authorization_url: "https://id.example/auth",
+              token_url: "https://id.example/token",
+              jwks_url: "https://id.example/keys",
+            },
+          },
+        ];
+      }
+      return response;
+    });
+    httpPut.mockResolvedValue({});
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, { global: { stubs } });
+    await flushPromises();
+
+    await wrapper.get('[data-testid="' + field + '"] input').setValue(value);
+    const secret = wrapper.get('[data-testid="generic-secret"] input');
+    expect(secret.attributes("placeholder")).toBe("Re-enter the client secret");
+    await wrapper.get("form.oauthForm").trigger("submit");
+    expect(httpPut).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("Re-enter the client secret");
+
+    await secret.setValue("explicit-secret");
+    await wrapper.get("form.oauthForm").trigger("submit");
+    await flushPromises();
+    expect(httpPut).toHaveBeenCalledWith(
+      "/api/security/oauth2",
+      expect.objectContaining({
+        providers: [expect.objectContaining({ id: "company", client_secret: "explicit-secret" })],
+      }),
+    );
+  });
+
   it("requires all URLs for an enabled generic provider", async () => {
     const module = await import("@/views/admin/AdminSystem.vue");
     const wrapper = mount(module.default, { global: { stubs } });
