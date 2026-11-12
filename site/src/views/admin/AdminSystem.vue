@@ -10,6 +10,8 @@ import { siteStore } from "@/stores/site";
 import type {
   OAuth2CasbinConfig,
   OAuth2Configuration,
+  OAuth2GenericEndpoints,
+  OAuth2GenericProvider,
   OAuth2GroupRoleMapping,
   OAuth2ProviderKind,
   OidcProviderConfig,
@@ -60,6 +62,18 @@ interface EditableOAuthProvider {
   tenant_id?: string;
 }
 
+interface EditableGenericProvider extends EditableOAuthProvider {
+  rowId: string;
+  id: string;
+  display_name: string;
+  issuer: string;
+  authorization_url: string;
+  token_url: string;
+  jwks_url: string;
+  token_endpoint_auth_method: "client_secret_basic" | "client_secret_post";
+  id_token_signing_alg: "RS256";
+}
+
 interface EditableGroupRoleMapping {
   id: string;
   provider: OAuth2ProviderKind;
@@ -75,6 +89,7 @@ interface EditableOAuthConfiguration {
   auto_create_users: boolean;
   google: EditableOAuthProvider;
   microsoft: EditableOAuthProvider;
+  providers: EditableGenericProvider[];
   casbin_model: string;
   casbin_policy: string;
   group_role_mappings: EditableGroupRoleMapping[];
@@ -96,6 +111,15 @@ interface OAuth2UpdatePayload {
   auto_create_users: boolean;
   google: OAuth2ProviderUpdatePayload | null;
   microsoft: OAuth2ProviderUpdatePayload | null;
+  providers: (OAuth2ProviderUpdatePayload & {
+    id: string;
+    display_name: string;
+    enabled: boolean;
+    issuer: string;
+    token_endpoint_auth_method: string;
+    id_token_signing_alg: string;
+    endpoints: OAuth2GenericEndpoints | null;
+  })[];
   casbin: OAuth2CasbinConfig | null;
   group_role_mappings: OAuth2GroupRoleMapping[];
 }
@@ -109,10 +133,20 @@ const ssoInitialSignature = ref(JSON.stringify(toSsoPayload(ssoForm.value)));
 
 const oauthLoading = ref(true);
 const oauthSaving = ref(false);
+const discoveringProviders = ref(new Set<string>());
 const oauthForm = ref<EditableOAuthConfiguration>(defaultOAuthForm());
+const savedGenericProviders = ref<OAuth2GenericProvider[]>([]);
 const oauthInitialSignature = ref(JSON.stringify(oauthForm.value));
 const availableRoles = ref<string[]>([]);
 const roleOptionsId = "pkgly-role-options";
+const mappingProviderOptions = computed(() => [
+  { title: "Google", value: "google" },
+  { title: "Microsoft", value: "microsoft" },
+  ...oauthForm.value.providers.map((provider) => ({
+    title: provider.display_name || provider.id,
+    value: provider.id,
+  })),
+]);
 
 const alerts = useAlertsStore();
 
@@ -198,6 +232,7 @@ async function fetchOAuthSettings() {
   try {
     const response = await http.get<OAuth2Configuration>("/api/security/oauth2");
     oauthForm.value = toOAuthEditable(response.data);
+    savedGenericProviders.value = response.data.providers ?? [];
     oauthInitialSignature.value = JSON.stringify(oauthForm.value);
     availableRoles.value = response.data.available_roles ?? [];
   } catch (error) {
@@ -269,18 +304,61 @@ async function saveSsoSettings() {
   }
 }
 
+async function discoverGenericEndpoints(provider: EditableGenericProvider) {
+  const issuer = provider.issuer.trim();
+  const authMethod = provider.token_endpoint_auth_method;
+  const pending = discoveringProviders.value;
+  if (!issuer || pending.has(provider.rowId) || oauthSaving.value) {
+    return;
+  }
+
+  resetError();
+  pending.add(provider.rowId);
+  try {
+    const { data } = await http.post<OAuth2GenericEndpoints>("/api/security/oauth2/discover", {
+      issuer,
+      token_endpoint_auth_method: authMethod,
+    });
+    if (
+      oauthForm.value.providers.includes(provider) &&
+      provider.issuer.trim() === issuer &&
+      provider.token_endpoint_auth_method === authMethod
+    ) {
+      provider.authorization_url = data.authorization_url;
+      provider.token_url = data.token_url;
+      provider.jwks_url = data.jwks_url;
+    }
+  } catch (error) {
+    const resolved = resolveRequestError(
+      error,
+      "Unable to fetch OIDC endpoints",
+      "Check the issuer URL or enter the endpoints manually.",
+    );
+    showError(resolved.title, resolved.message);
+  } finally {
+    pending.delete(provider.rowId);
+  }
+}
+
+function mustReenterGenericSecret(provider: EditableGenericProvider): boolean {
+  const saved = savedGenericProviders.value.find((item) => item.id === provider.id.trim());
+  return (
+    saved?.client_secret_configured === true &&
+    (saved.issuer !== provider.issuer.trim() ||
+      saved.client_id !== provider.client_id.trim() ||
+      (saved.endpoints?.token_url ?? "") !== provider.token_url.trim())
+  );
+}
+
 async function saveOAuthSettings() {
-  if (oauthSaving.value) {
+  if (oauthSaving.value || discoveringProviders.value.size) {
     return;
   }
   resetError();
 
   if (oauthForm.value.enabled) {
     if (oauthForm.value.google.enabled && !oauthForm.value.google.client_id.trim()) {
-      showError(
-        "Google client ID required",
-        "Enter a Google client ID or disable the provider.",
-      );
+      showError("Google client ID required", "Enter a Google client ID or disable the provider.");
       return;
     }
     if (
@@ -303,12 +381,34 @@ async function saveOAuthSettings() {
       !oauthForm.value.microsoft.secretConfigured &&
       !oauthForm.value.microsoft.client_secret.trim()
     ) {
-      showError(
-        "Microsoft client secret required",
-        "Provide the Microsoft client secret.",
-      );
+      showError("Microsoft client secret required", "Provide the Microsoft client secret.");
       return;
     }
+  }
+
+  if (
+    oauthForm.value.providers.some(
+      (provider) =>
+        provider.enabled &&
+        [provider.authorization_url, provider.token_url, provider.jwks_url].some(
+          (url) => !url.trim(),
+        ),
+    )
+  ) {
+    showError("OIDC endpoints required", "Enter the authorization, token, and signing key URLs.");
+    return;
+  }
+
+  if (
+    oauthForm.value.providers.some(
+      (provider) => mustReenterGenericSecret(provider) && !provider.client_secret.trim(),
+    )
+  ) {
+    showError(
+      "OIDC client secret required",
+      "Re-enter the client secret when the token URL, issuer, or client ID changes.",
+    );
+    return;
   }
 
   oauthSaving.value = true;
@@ -325,7 +425,6 @@ async function saveOAuthSettings() {
       "Unable to save OAuth2 settings",
       "Check the server logs for more details.",
     );
-    console.error(resolved.debugMessage);
     showError(resolved.title, resolved.message);
   } finally {
     oauthSaving.value = false;
@@ -403,6 +502,7 @@ function defaultOAuthForm(): EditableOAuthConfiguration {
     auto_create_users: false,
     google: defaultProvider(),
     microsoft: defaultProvider(),
+    providers: [],
     casbin_model: "",
     casbin_policy: "",
     group_role_mappings: [],
@@ -525,6 +625,19 @@ function toOAuthEditable(settings: OAuth2Configuration): EditableOAuthConfigurat
     form.microsoft.tenant_id = settings.microsoft.tenant_id ?? "";
   }
 
+  form.providers = (settings.providers ?? []).map((provider) => ({
+    ...defaultGenericProvider(),
+    ...provider,
+    rowId: generateId(),
+    client_secret: "",
+    tenant_id: provider.tenant_id ?? undefined,
+    secretConfigured: provider.client_secret_configured,
+    scopes: provider.scopes.join(" "),
+    redirect_path: provider.redirect_path ?? "",
+    authorization_url: provider.endpoints?.authorization_url ?? "",
+    token_url: provider.endpoints?.token_url ?? "",
+    jwks_url: provider.endpoints?.jwks_url ?? "",
+  }));
   form.casbin_model = settings.casbin?.model ?? "";
   form.casbin_policy = settings.casbin?.policy ?? "";
 
@@ -547,7 +660,10 @@ function toOAuthPayload(settings: EditableOAuthConfiguration): OAuth2UpdatePaylo
   };
 
   const sanitizeScopes = (value: string) => {
-    const tokens = value.split(/[\s,]+/).map((scope) => scope.trim()).filter((scope) => scope);
+    const tokens = value
+      .split(/[\s,]+/)
+      .map((scope) => scope.trim())
+      .filter((scope) => scope);
     return tokens.length > 0 ? tokens : ["openid", "profile", "email"];
   };
 
@@ -604,6 +720,26 @@ function toOAuthPayload(settings: EditableOAuthConfiguration): OAuth2UpdatePaylo
     auto_create_users: settings.auto_create_users,
     google,
     microsoft,
+    providers: settings.providers.map((provider) => ({
+      id: provider.id.trim(),
+      display_name: provider.display_name.trim(),
+      enabled: provider.enabled,
+      issuer: provider.issuer.trim(),
+      client_id: provider.client_id.trim(),
+      client_secret: provider.client_secret || null,
+      scopes: sanitizeScopes(provider.scopes),
+      redirect_path: sanitizeOptional(provider.redirect_path),
+      token_endpoint_auth_method: provider.token_endpoint_auth_method,
+      id_token_signing_alg: "RS256",
+      endpoints:
+        provider.authorization_url || provider.token_url || provider.jwks_url
+          ? {
+              authorization_url: provider.authorization_url.trim(),
+              token_url: provider.token_url.trim(),
+              jwks_url: provider.jwks_url.trim(),
+            }
+          : null,
+    })),
     casbin:
       settings.casbin_model.trim() || settings.casbin_policy.trim()
         ? {
@@ -613,6 +749,37 @@ function toOAuthPayload(settings: EditableOAuthConfiguration): OAuth2UpdatePaylo
         : null,
     group_role_mappings: filteredMappings,
   };
+}
+
+function defaultGenericProvider(): EditableGenericProvider {
+  return {
+    ...defaultProvider(),
+    enabled: true,
+    rowId: generateId(),
+    id: "",
+    display_name: "",
+    issuer: "",
+    authorization_url: "",
+    token_url: "",
+    jwks_url: "",
+    token_endpoint_auth_method: "client_secret_basic",
+    id_token_signing_alg: "RS256",
+  };
+}
+
+function addGenericProvider() {
+  oauthForm.value.providers.push(defaultGenericProvider());
+}
+function removeGenericProvider(rowId: string) {
+  const removed = oauthForm.value.providers.find((provider) => provider.rowId === rowId);
+  if (removed) {
+    oauthForm.value.group_role_mappings = oauthForm.value.group_role_mappings.filter(
+      (mapping) => mapping.provider !== removed.id,
+    );
+  }
+  oauthForm.value.providers = oauthForm.value.providers.filter(
+    (provider) => provider.rowId !== rowId,
+  );
 }
 
 function addGroupMapping() {
@@ -652,8 +819,8 @@ function removeOidcProvider(id: string) {
       <header>
         <h2>Single Sign On</h2>
         <p>
-          Configure how Pkgly integrates with an upstream SSO proxy. Changes apply immediately
-          and will affect the login screen.
+          Configure how Pkgly integrates with an upstream SSO proxy. Changes apply immediately and
+          will affect the login screen.
         </p>
       </header>
       <SpinnerElement v-if="ssoLoading" />
@@ -892,7 +1059,8 @@ function removeOidcProvider(id: string) {
       <header>
         <h2>OAuth2 Providers</h2>
         <p>
-          Configure direct Google or Microsoft sign-in and map external groups to Pkgly roles.
+          Configure direct OIDC, Google, or Microsoft sign-in and map external groups to Pkgly
+          roles.
         </p>
       </header>
       <SpinnerElement v-if="oauthLoading" />
@@ -946,7 +1114,11 @@ function removeOidcProvider(id: string) {
 
         <div class="casbinEditors">
           <section class="casbin-block">
-            <label class="casbin-block__title" for="casbin-model">Casbin model</label>
+            <label
+              class="casbin-block__title"
+              for="casbin-model"
+              >Casbin model</label
+            >
             <textarea
               id="casbin-model"
               v-model="oauthForm.casbin_model"
@@ -955,7 +1127,11 @@ function removeOidcProvider(id: string) {
               rows="8" />
           </section>
           <section class="casbin-block">
-            <label class="casbin-block__title" for="casbin-policy">Casbin policy</label>
+            <label
+              class="casbin-block__title"
+              for="casbin-policy"
+              >Casbin policy</label
+            >
             <textarea
               id="casbin-policy"
               v-model="oauthForm.casbin_policy"
@@ -1077,13 +1253,159 @@ function removeOidcProvider(id: string) {
           </p>
         </div>
 
-        <div class="roleMappings">
-          <header class="roleMappings__header">
+        <section class="providerSection genericProviders">
+          <header class="providerSection__header">
+            <h3>Custom OIDC providers</h3>
+            <p class="hint">Enter the issuer URL, client credentials, and endpoints.</p>
+            <v-btn
+              data-testid="add-generic-provider"
+              variant="outlined"
+              color="primary"
+              block
+              prepend-icon="mdi-plus"
+              @click="addGenericProvider">
+              Add provider
+            </v-btn>
+          </header>
+          <div
+            v-for="provider in oauthForm.providers"
+            :key="provider.rowId"
+            class="oidcProvider">
+            <SwitchInput
+              :id="`generic-enabled-${provider.rowId}`"
+              v-model="provider.enabled"
+              >Enable provider</SwitchInput
+            >
+            <div class="grid">
+              <TextInput
+                :id="`generic-id-${provider.rowId}`"
+                data-testid="generic-id"
+                v-model="provider.id"
+                >Provider ID</TextInput
+              >
+              <TextInput
+                :id="`generic-name-${provider.rowId}`"
+                data-testid="generic-name"
+                v-model="provider.display_name"
+                >Login button label</TextInput
+              >
+              <TextInput
+                :id="`generic-issuer-${provider.rowId}`"
+                data-testid="generic-issuer"
+                v-model="provider.issuer"
+                >Issuer URL</TextInput
+              >
+              <TextInput
+                :id="`generic-client-${provider.rowId}`"
+                data-testid="generic-client-id"
+                v-model="provider.client_id"
+                >Client ID</TextInput
+              >
+              <PasswordInput
+                :id="`generic-secret-${provider.rowId}`"
+                data-testid="generic-secret"
+                v-model="provider.client_secret"
+                autocomplete="new-password"
+                :placeholder="
+                  mustReenterGenericSecret(provider)
+                    ? 'Re-enter the client secret'
+                    : provider.secretConfigured
+                      ? 'Leave blank to keep the current secret'
+                      : 'Client secret'
+                "
+                >Client secret</PasswordInput
+              >
+              <TextInput
+                :id="`generic-scopes-${provider.rowId}`"
+                v-model="provider.scopes"
+                >Scopes</TextInput
+              >
+              <TextInput
+                :id="`generic-callback-${provider.rowId}`"
+                v-model="provider.redirect_path"
+                placeholder="/api/user/oauth2/callback"
+                >Callback override (optional)</TextInput
+              >
+              <v-select
+                :id="`generic-client-authentication-${provider.rowId}`"
+                data-testid="generic-client-authentication"
+                v-model="provider.token_endpoint_auth_method"
+                label="Client authentication"
+                :items="[
+                  { title: 'HTTP Basic', value: 'client_secret_basic' },
+                  { title: 'Request body', value: 'client_secret_post' },
+                ]"
+                variant="outlined"
+                density="comfortable" />
+            </div>
+            <div>
+              <v-btn
+                data-testid="discover-generic-endpoints"
+                type="button"
+                variant="outlined"
+                color="primary"
+                :disabled="
+                  !provider.issuer.trim() || oauthSaving || discoveringProviders.has(provider.rowId)
+                "
+                :loading="discoveringProviders.has(provider.rowId)"
+                @click="discoverGenericEndpoints(provider)">
+                Fetch endpoints from issuer
+              </v-btn>
+              <p class="hint">Review the URLs before you save.</p>
+            </div>
+            <div class="grid">
+              <TextInput
+                :id="'generic-auth-' + provider.rowId"
+                data-testid="generic-auth-url"
+                v-model="provider.authorization_url"
+                :disabled="discoveringProviders.has(provider.rowId)"
+                :required="provider.enabled"
+                >Authorization URL</TextInput
+              >
+              <TextInput
+                :id="'generic-token-' + provider.rowId"
+                data-testid="generic-token-url"
+                v-model="provider.token_url"
+                :disabled="discoveringProviders.has(provider.rowId)"
+                :required="provider.enabled"
+                >Token URL</TextInput
+              >
+              <TextInput
+                :id="'generic-jwks-' + provider.rowId"
+                data-testid="generic-jwks-url"
+                v-model="provider.jwks_url"
+                :disabled="discoveringProviders.has(provider.rowId)"
+                :required="provider.enabled"
+                >Signing key URL</TextInput
+              >
+            </div>
+            <div class="providerActions">
+              <v-btn
+                variant="text"
+                color="error"
+                prepend-icon="mdi-delete"
+                @click="removeGenericProvider(provider.rowId)">
+                Remove provider
+              </v-btn>
+            </div>
+          </div>
+        </section>
+
+        <section class="providerSection roleMappings">
+          <header class="providerSection__header">
             <h3>Group to role mappings</h3>
             <p>
-              Map provider group or role claims to Pkgly Casbin roles. Roles are comma
-              separated.
+              Map provider group or role claims to Pkgly Casbin roles. Roles are comma separated.
             </p>
+            <v-btn
+              variant="outlined"
+              color="primary"
+              block
+              :disabled="!oauthForm.enabled"
+              prepend-icon="mdi-plus"
+              @click="addGroupMapping">
+              Add mapping
+            </v-btn>
           </header>
           <div
             v-if="oauthForm.group_role_mappings.length === 0"
@@ -1093,52 +1415,49 @@ function removeOidcProvider(id: string) {
           <div
             v-for="mapping in oauthForm.group_role_mappings"
             :key="mapping.id"
-            class="mappingRow">
-            <label>
-              Provider
-              <select v-model="mapping.provider">
-                <option value="google">Google</option>
-                <option value="microsoft">Microsoft</option>
-              </select>
-            </label>
-            <TextInput
-              :id="`mapping-group-${mapping.id}`"
-              v-model="mapping.group"
-              autocomplete="off"
-              required>
-              Group or role ID
-            </TextInput>
-            <TextInput
-              :id="`mapping-roles-${mapping.id}`"
-              v-model="mapping.rolesText"
-              :list="roleOptionsId"
-              autocomplete="off"
-              placeholder="read/write, admin">
-              Pkgly roles (comma separated)
-            </TextInput>
-          <v-btn
-            variant="text"
-            color="error"
-            :disabled="!oauthForm.enabled"
-            prepend-icon="mdi-delete"
-            @click="removeGroupMapping(mapping.id)">
-            Remove
-          </v-btn>
+            class="roleMapping">
+            <div class="mappingRow">
+              <v-select
+                :id="`mapping-provider-${mapping.id}`"
+                data-testid="mapping-provider"
+                v-model="mapping.provider"
+                label="Provider"
+                :items="mappingProviderOptions"
+                variant="outlined"
+                density="comfortable" />
+              <TextInput
+                :id="`mapping-group-${mapping.id}`"
+                v-model="mapping.group"
+                autocomplete="off"
+                required>
+                Group or role ID
+              </TextInput>
+              <TextInput
+                :id="`mapping-roles-${mapping.id}`"
+                v-model="mapping.rolesText"
+                :list="roleOptionsId"
+                autocomplete="off"
+                placeholder="read/write, admin">
+                Pkgly roles (comma separated)
+              </TextInput>
+            </div>
+            <div class="providerActions">
+              <v-btn
+                variant="text"
+                color="error"
+                :disabled="!oauthForm.enabled"
+                prepend-icon="mdi-delete"
+                @click="removeGroupMapping(mapping.id)">
+                Remove
+              </v-btn>
+            </div>
           </div>
-        <v-btn
-          variant="outlined"
-          color="primary"
-          :disabled="!oauthForm.enabled"
-          prepend-icon="mdi-plus"
-          @click="addGroupMapping">
-          Add mapping
-        </v-btn>
-        </div>
+        </section>
 
         <footer class="actions">
           <SubmitButton
             :block="false"
-            :disabled="!hasOAuthChanges || oauthSaving"
+            :disabled="!hasOAuthChanges || oauthSaving || discoveringProviders.size > 0"
             :loading="oauthSaving"
             prepend-icon="mdi-content-save"
             title="Save OAuth2 configuration">
@@ -1161,7 +1480,6 @@ function removeOidcProvider(id: string) {
         </datalist>
       </form>
     </section>
-
   </main>
 </template>
 
@@ -1175,7 +1493,8 @@ function removeOidcProvider(id: string) {
   gap: 1.5rem;
 }
 
-.oidcProvider {
+.oidcProvider,
+.roleMapping {
   border: 1px dashed var(--nr-border-color);
   border-radius: var(--nr-radius-md);
   padding: 0.75rem;
@@ -1247,20 +1566,9 @@ function removeOidcProvider(id: string) {
   }
 }
 
-.roleMappings {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-
-  &__header {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-
-    h3 {
-      margin: 0;
-    }
-  }
+.roleMapping .mappingRow {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: start;
 }
 
 .roles-field {

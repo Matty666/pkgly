@@ -1,4 +1,9 @@
-use axum::{Json, extract::State, response::Response, routing::get};
+use axum::{
+    Json,
+    extract::State,
+    response::Response,
+    routing::{get, post},
+};
 use nr_core::user::permissions::HasPermissions;
 use tracing::{error, instrument};
 use utoipa::{OpenApi, ToSchema};
@@ -6,11 +11,12 @@ use utoipa::{OpenApi, ToSchema};
 use crate::{
     app::{
         Pkgly,
-        authentication::Authentication,
-        authentication::oauth::normalize_scopes,
+        authentication::oauth::{discover_oidc_endpoints, normalize_scopes},
+        authentication::{Authentication, OnlySessionAllowedAuthentication},
         config::{
-            OAuth2CasbinConfig, OAuth2GoogleConfig, OAuth2GroupRoleMapping, OAuth2MicrosoftConfig,
-            OAuth2Settings, OidcProviderConfig, PasswordRules, SsoSettings, TokenSource,
+            OAuth2CasbinConfig, OAuth2GenericConfig, OAuth2GenericEndpoints, OAuth2GoogleConfig,
+            OAuth2GroupRoleMapping, OAuth2MicrosoftConfig, OAuth2Settings, OidcProviderConfig,
+            PasswordRules, SsoSettings, TokenSource, validate_oidc_issuer,
         },
     },
     error::InternalError,
@@ -26,6 +32,7 @@ use serde::{Deserialize, Serialize};
         get_sso_settings,
         update_sso_settings,
         get_oauth2_settings,
+        discover_oauth2_endpoints,
         update_oauth2_settings,
         get_password_rules,
         update_password_rules,
@@ -41,6 +48,7 @@ pub fn security_routes() -> axum::Router<Pkgly> {
             "/oauth2",
             get(get_oauth2_settings).put(update_oauth2_settings),
         )
+        .route("/oauth2/discover", post(discover_oauth2_endpoints))
         .route(
             "/password-rules",
             get(get_password_rules).put(update_password_rules),
@@ -58,6 +66,35 @@ struct OAuth2ProviderSettingsResponse {
     client_secret_configured: bool,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+struct OidcDiscoveryRequest {
+    issuer: String,
+    token_endpoint_auth_method: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct GenericProviderResponse {
+    id: String,
+    display_name: String,
+    enabled: bool,
+    issuer: String,
+    client_id: String,
+    scopes: Vec<String>,
+    redirect_path: Option<String>,
+    endpoints: Option<OAuth2GenericEndpoints>,
+    token_endpoint_auth_method: String,
+    id_token_signing_alg: String,
+    client_secret_configured: bool,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+struct GenericProviderRequest {
+    #[serde(default)]
+    client_secret: Option<String>,
+    #[serde(flatten)]
+    config: OAuth2GenericConfig,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 struct OAuth2SettingsResponse {
     enabled: bool,
@@ -70,6 +107,7 @@ struct OAuth2SettingsResponse {
     google: Option<OAuth2ProviderSettingsResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     microsoft: Option<OAuth2ProviderSettingsResponse>,
+    providers: Vec<GenericProviderResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     casbin: Option<OAuth2CasbinConfig>,
     #[serde(default)]
@@ -114,6 +152,8 @@ pub struct OAuth2SettingsRequest {
     google: Option<OAuth2ProviderSettingsRequest>,
     #[serde(default)]
     microsoft: Option<OAuth2MicrosoftSettingsRequest>,
+    #[serde(default)]
+    providers: Option<Vec<GenericProviderRequest>>,
     #[serde(default)]
     casbin: Option<OAuth2CasbinConfig>,
     #[serde(default)]
@@ -229,6 +269,23 @@ fn build_oauth2_response(settings: &OAuth2Settings) -> OAuth2SettingsResponse {
         auto_create_users: settings.auto_create_users,
         google,
         microsoft,
+        providers: settings
+            .providers
+            .iter()
+            .map(|cfg| GenericProviderResponse {
+                id: cfg.id.clone(),
+                display_name: cfg.display_name.clone(),
+                enabled: cfg.enabled,
+                issuer: cfg.issuer.clone(),
+                client_id: cfg.client_id.clone(),
+                scopes: cfg.scopes.clone(),
+                redirect_path: cfg.redirect_path.clone(),
+                endpoints: cfg.endpoints.clone(),
+                token_endpoint_auth_method: cfg.token_endpoint_auth_method.clone(),
+                id_token_signing_alg: cfg.id_token_signing_alg.clone(),
+                client_secret_configured: !cfg.client_secret.is_empty(),
+            })
+            .collect(),
         casbin: settings.casbin.clone(),
         group_role_mappings: settings.group_role_mappings.clone(),
         available_roles: settings
@@ -292,7 +349,7 @@ fn merge_oauth2_settings(
         })
         .collect();
 
-    Ok(OAuth2Settings {
+    let settings = OAuth2Settings {
         enabled: request.enabled,
         login_path,
         callback_path,
@@ -300,9 +357,12 @@ fn merge_oauth2_settings(
         auto_create_users: request.auto_create_users,
         google,
         microsoft,
+        providers: merge_generic_settings(current, request.providers)?,
         casbin,
         group_role_mappings,
-    })
+    };
+    settings.validate_providers()?;
+    Ok(settings)
 }
 
 fn sanitize_header_name(header: &str) -> Result<String, String> {
@@ -518,7 +578,7 @@ mod tests;
     get,
     path = "/oauth2",
     tag = "security",
-    responses((status = 200, description = "Current OAuth2 configuration", body = OAuth2Settings)),
+    responses((status = 200, description = "Current OAuth2 configuration", body = OAuth2SettingsResponse)),
     security(("session" = []))
 )]
 #[instrument(skip(auth, site), fields(project_module = "Security"))]
@@ -536,11 +596,52 @@ pub async fn get_oauth2_settings(
     Ok(ResponseBuilder::ok().json(&response))
 }
 
+/// Return discovered URLs for an administrator to review before saving.
+#[utoipa::path(
+    post,
+    path = "/oauth2/discover",
+    tag = "security",
+    request_body = OidcDiscoveryRequest,
+    responses(
+        (status = 200, description = "Discovered provider endpoints", body = OAuth2GenericEndpoints),
+        (status = 400, description = "Invalid issuer or client authentication method"),
+        (status = 403, description = "Administrator session required"),
+        (status = 502, description = "Could not use issuer metadata"),
+    ),
+    security(("session" = []))
+)]
+#[instrument(skip(auth, request), fields(project_module = "Security"))]
+async fn discover_oauth2_endpoints(
+    auth: OnlySessionAllowedAuthentication,
+    Json(request): Json<OidcDiscoveryRequest>,
+) -> Response {
+    if !auth.admin {
+        return ResponseBuilder::forbidden().body("Administrator permissions required");
+    }
+
+    let issuer = request.issuer.trim();
+    if let Err(message) = validate_oidc_issuer(issuer) {
+        return ResponseBuilder::bad_request().body(message);
+    }
+    let auth_method = request.token_endpoint_auth_method.as_str();
+    if !matches!(auth_method, "client_secret_basic" | "client_secret_post") {
+        return ResponseBuilder::bad_request()
+            .body("Unsupported OIDC client authentication method");
+    }
+
+    match discover_oidc_endpoints(issuer, auth_method).await {
+        Ok(endpoints) => ResponseBuilder::ok().json(&endpoints),
+        Err(message) => ResponseBuilder::default()
+            .status(http::StatusCode::BAD_GATEWAY)
+            .body(message),
+    }
+}
+
 #[utoipa::path(
     put,
     path = "/oauth2",
     tag = "security",
-    request_body = OAuth2Settings,
+    request_body = OAuth2SettingsRequest,
     responses((status = 204, description = "OAuth2 configuration updated")),
     security(("session" = []))
 )]
@@ -636,4 +737,48 @@ pub async fn update_password_rules(
     }
 
     Ok(ResponseBuilder::no_content().empty())
+}
+
+fn merge_generic_settings(
+    current: Option<&OAuth2Settings>,
+    request: Option<Vec<GenericProviderRequest>>,
+) -> Result<Vec<OAuth2GenericConfig>, String> {
+    let Some(request) = request else {
+        return Ok(current.map(|cfg| cfg.providers.clone()).unwrap_or_default());
+    };
+    request
+        .into_iter()
+        .map(|req| {
+            let mut config = req.config;
+            let saved = current
+                .and_then(|cfg| cfg.providers.iter().find(|old| old.id == config.id))
+                .filter(|old| !old.client_secret.is_empty());
+            config.client_secret = match (req.client_secret, saved) {
+                (Some(secret), _) if secret.trim().is_empty() => {
+                    return Err("OIDC client secret cannot be empty".into());
+                }
+                (Some(secret), _) => secret,
+                (None, Some(old))
+                    if generic_credential_binding(old) != generic_credential_binding(&config) =>
+                {
+                    return Err(
+                        "Re-enter the OIDC client secret when the token URL, issuer, or client ID changes."
+                            .into(),
+                    );
+                }
+                (None, Some(old)) => old.client_secret.clone(),
+                (None, None) => String::new(),
+            };
+            config.validate()?;
+            Ok(config)
+        })
+        .collect()
+}
+
+fn generic_credential_binding(config: &OAuth2GenericConfig) -> (&str, &str, Option<&str>) {
+    let token_url = config
+        .endpoints
+        .as_ref()
+        .map(|endpoints| endpoints.token_url.as_str());
+    (&config.issuer, &config.client_id, token_url)
 }

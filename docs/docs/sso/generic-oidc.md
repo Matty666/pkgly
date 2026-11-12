@@ -1,0 +1,152 @@
+# Generic OIDC login
+
+Pkgly supports configurable OpenID Connect (OIDC) providers beside Google and Microsoft.
+OIDC uses OAuth2 for authorization and adds a signed ID token for authentication.
+The admin page groups these providers under **OAuth2 Providers → Custom OIDC providers**.
+The separate **Single Sign-On → OIDC / JWT Providers (JWKS)** section validates tokens supplied through headers or cookies.
+Pkgly handles the authorization-code flow, PKCE, nonce validation, and local session creation.
+Provider configuration supplies the issuer, credentials, endpoints, scopes, and login label. Custom providers share the same implementation.
+
+## Configure a provider
+
+Use **Administration → System → OAuth2 Providers → Custom OIDC providers**.
+Select the orange **Add provider** button above the provider cards.
+Each card has a red **Remove provider** button with a delete icon at the bottom right.
+Use the **Client authentication** dropdown to choose HTTP Basic or request-body credentials.
+The dropdown has a floating label and matches the adjacent text fields.
+Supply a stable provider ID, login label, issuer URL, client ID, and client secret.
+Enter all three endpoint URLs, or select **Fetch endpoints from issuer** to fill them in.
+Review the URLs before you save.
+Register the Pkgly callback URI with your identity provider: `https://packages.example.com/api/user/oauth2/callback`.
+Enable OAuth2 and the provider, then save the settings. Changes apply without a restart.
+
+The same configuration can come from the configuration file:
+
+```toml
+[security.oauth2]
+enabled = true
+redirect_base_url = "https://packages.example.com"
+auto_create_users = false
+
+[[security.oauth2.providers]]
+id = "company-sso"
+display_name = "Company sign-in"
+enabled = true
+issuer = "https://identity.example.com/team"
+client_id = "pkgly"
+client_secret = "<supply securely>"
+scopes = ["openid", "profile", "email"]
+token_endpoint_auth_method = "client_secret_basic"
+id_token_signing_alg = "RS256"
+
+[security.oauth2.providers.endpoints]
+authorization_url = "https://identity.example.com/authorize"
+token_url = "https://identity.example.com/token"
+jwks_url = "https://identity.example.com/keys"
+```
+
+Database settings saved through the admin API take priority over file settings at startup.
+Keep secrets outside source control. Admin responses return `client_secret_configured`, without the secret.
+A blank secret field retains the existing secret when the token URL, issuer, and client ID stay the same.
+If any of these values change, re-enter the secret before you save. You can use the same secret if it still applies.
+An omitted or null secret in an API request follows the same rule.
+An explicit empty secret is invalid. Changing the provider ID creates a new provider and requires new credentials.
+
+IDs accept lowercase letters, digits, hyphens, and underscores, with a maximum of 64 characters.
+IDs must be unique, including disabled providers. Google, Microsoft, and existing Microsoft aliases are reserved.
+The login label can change without changing the ID. Login buttons use configuration order after the built-in providers.
+Use the provider ID in group-to-role mappings.
+Select **Add mapping** above the mapping cards. Each card has its own **Remove** button.
+Disabled providers retain their configuration. You can disable all custom providers and keep password login available.
+Removing a custom provider also removes its role mappings in the editor. The API rejects mappings for unknown custom provider IDs.
+
+## Supported provider options
+
+This release supports confidential clients with `client_secret_basic` or `client_secret_post` and RS256 ID tokens.
+Scopes must include `openid`. Public clients, encrypted ID tokens, UserInfo, and custom identity claim names are unsupported.
+Configure providers to return the required standard identity claims in the ID token.
+
+An enabled provider requires an authorization URL, a token URL, and a signing key URL.
+These correspond to the provider metadata fields `authorization_endpoint`, `token_endpoint`, and `jwks_uri`.
+The URLs can use different paths or hosts. Check the provider's documentation before you save URLs on a different host.
+
+**Fetch endpoints from issuer** requires an administrator session. Pkgly sends a metadata request to
+the configured issuer and checks that the response declares the exact same issuer URL.
+The request sends no client credentials. Pkgly fills the form, and **Save** applies the settings.
+If the fetch fails, you can enter the three URLs manually. The current saved settings stay in effect.
+
+Sign-in uses the saved endpoints. If the provider changes its URLs, fetch them again or enter the new values and save.
+Pkgly fetches the current signing keys from the saved URL at each callback. Later requests use the Pkgly session.
+
+Issuer and endpoint URLs require HTTPS without embedded credentials or fragments.
+The issuer cannot contain a query string. Private destinations require explicit exceptions in `security.egress`.
+Metadata and token requests have a ten-second timeout. Signing-key requests have a five-second timeout.
+These requests reject redirects.
+
+## Login checks and account matching
+
+Generic callbacks validate the signature, exact issuer, client audience, expiry, subject, issue time, and saved nonce.
+Only the registered RS256 algorithm is accepted. The audience can be a string or an array containing only the client ID.
+A present `azp` must equal the client ID. Clock tolerance is 30 seconds.
+Login state is valid for five minutes. Pkgly deletes the row atomically before exchanging the authorization code.
+When Pkgly saves a new OAuth login attempt, it also deletes unused rows older than 15 minutes.
+Relevant provider or callback changes reject pending logins. Start a new login after changing configuration.
+
+Pkgly preserves its existing account lookup:
+
+1. Match email when `email_verified` is boolean `true`.
+2. Otherwise, use the existing username lookup and normalization.
+3. Deny an unmatched identity when automatic creation is disabled.
+4. Apply existing creation guards when automatic creation is enabled.
+
+A verified email match wins over a different username match.
+The username comes from `preferred_username`, then `email`, then `sub`.
+Pkgly normalizes that value before its username lookup. Missing or false email verification does not permit an email match.
+Inactive accounts cannot obtain sessions. Keep automatic creation disabled when mapping existing accounts.
+
+## Fork preview image
+
+The fork publishes a Linux AMD64 preview after the PR integration tests pass.
+Publication runs only for `feature/generic-oidc` when the PR head and base belong to the same fork.
+External PR branches cannot publish this image. CI uses its built-in GitHub token with package write access.
+
+The image is the same `pkgly:test` image that passed the package integration tests.
+CI builds it from the exact PR head and records that commit in its image metadata.
+The image name comes from the lowercase GitHub repository name, as in the main publishing workflow.
+Use the full image reference from the job summary, or substitute your lowercase repository name below:
+
+```sh
+repository=your-owner/pkgly
+docker pull "ghcr.io/${repository}:generic-oidc"
+```
+
+For repeatable QA, use the full commit SHA tag or the digest from the publication log.
+The preview does not update the `latest` tag or create a release.
+A new package starts private. Authenticate to pull it, or make the package public in GitHub package settings.
+Image publication does not change your deployment or identity provider configuration.
+
+## Environment example: Authelia
+
+Authelia is one possible configured provider. Pkgly contains no Authelia-specific product behavior.
+Register a confidential client in Authelia with the Pkgly callback URI, chosen authentication method, RS256, and PKCE S256.
+Configure Pkgly with that issuer and matching client credentials.
+
+Authelia can return profile and email claims through UserInfo. This release requires them in the ID token.
+Assign an ID-token claim policy to the Pkgly client:
+
+```yaml
+identity_providers:
+  oidc:
+    claims_policies:
+      pkgly:
+        id_token: ['preferred_username', 'email', 'email_verified', 'name']
+    clients:
+      - client_id: 'pkgly'
+        claims_policy: 'pkgly'
+        scopes: ['openid', 'profile', 'email']
+        # Complete the client credentials, callback, and authentication settings.
+```
+
+For group mapping, request `groups` and add it to the ID-token policy.
+Check compatibility against your deployed version and inspect claim names and types during login QA without saving raw tokens.
+See [Authelia claim policies](https://www.authelia.com/integration/openid-connect/openid-connect-1.0-claims/).

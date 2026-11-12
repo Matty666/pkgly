@@ -2,12 +2,24 @@
 <!-- ABOUTME: Handles login errors inline while preserving accessible form controls. -->
 <template>
   <v-container class="login-container">
-    <v-row justify="center" align="center">
-      <v-col cols="12" sm="8" md="6" lg="4" xl="3">
-        <v-card class="elevation-4" max-width="450">
+    <v-row
+      justify="center"
+      align="center">
+      <v-col
+        cols="12"
+        sm="8"
+        md="6"
+        lg="4"
+        xl="3">
+        <v-card
+          class="elevation-4"
+          max-width="450">
           <v-card-title class="text-center pa-6">
             <div class="d-flex flex-column align-center">
-              <BrandMark stacked :size="64" wordmark-class="text-h4 font-weight-medium" />
+              <BrandMark
+                stacked
+                :size="64"
+                wordmark-class="text-h4 font-weight-medium" />
               <span class="text-body-1 text-medium-emphasis mt-1">Sign in to your account</span>
             </div>
           </v-card-title>
@@ -48,7 +60,7 @@
                 @click="startOAuth(provider.provider)"
                 class="text-none mb-2">
                 <v-icon start>mdi-account-circle</v-icon>
-                Sign in with {{ providerLabel(provider.provider) }}
+                Sign in with {{ providerLabel(provider) }}
               </v-btn>
             </div>
 
@@ -62,7 +74,9 @@
             </div>
 
             <!-- Local Login Form -->
-            <v-form @submit.prevent="login" class="login-form">
+            <v-form
+              @submit.prevent="login"
+              class="login-form">
               <v-alert
                 v-if="failedLogin"
                 type="error"
@@ -71,7 +85,11 @@
                 Invalid username or password
               </v-alert>
 
-              <label class="sr-only" for="login-username">Username or Email</label>
+              <label
+                class="sr-only"
+                for="login-username"
+                >Username or Email</label
+              >
               <v-text-field
                 id="login-username"
                 v-model="input.email_or_username"
@@ -84,7 +102,11 @@
                 autofocus
                 class="mb-4" />
 
-              <label class="sr-only" for="login-password">Password</label>
+              <label
+                class="sr-only"
+                for="login-password"
+                >Password</label
+              >
               <v-text-field
                 id="login-password"
                 v-model="input.password"
@@ -158,12 +180,8 @@ const oauthProviders = computed<InstanceOAuth2Provider[]>(() => {
   return Array.isArray(providers) ? providers : [];
 });
 const ssoEnabled = computed(() => Boolean(site.siteInfo?.sso));
-const hasFederatedLogin = computed(
-  () => ssoEnabled.value || oauthProviders.value.length > 0,
-);
-const ssoButtonText = computed(
-  () => site.siteInfo?.sso?.login_button_text ?? "Sign in with SSO",
-);
+const hasFederatedLogin = computed(() => ssoEnabled.value || oauthProviders.value.length > 0);
+const ssoButtonText = computed(() => site.siteInfo?.sso?.login_button_text ?? "Sign in with SSO");
 type FederatedTarget =
   | { kind: "sso"; label: string }
   | { kind: "oauth"; label: string; provider: InstanceOAuth2Provider };
@@ -178,7 +196,7 @@ const primaryFederated = computed<FederatedTarget | null>(() => {
   }
   return {
     kind: "oauth",
-    label: `Sign in with ${providerLabel(firstProvider.provider)}`,
+    label: `Sign in with ${providerLabel(firstProvider)}`,
     provider: firstProvider,
   };
 });
@@ -220,8 +238,7 @@ function startSso() {
     const providerUrl = site.siteInfo?.sso?.provider_login_url ?? undefined;
     if (providerUrl && providerUrl !== "") {
       const providerTarget = resolveUrl(providerUrl);
-      const redirectParam =
-        site.siteInfo?.sso?.provider_redirect_param?.trim() ?? "redirect";
+      const redirectParam = site.siteInfo?.sso?.provider_redirect_param?.trim() ?? "redirect";
       providerTarget.searchParams.set(redirectParam, ssoUrl.toString());
       window.location.href = providerTarget.toString();
     } else {
@@ -252,7 +269,9 @@ function startOAuth(provider: string) {
   window.location.href = oauthUrl.toString();
 }
 
-function providerLabel(provider: string): string {
+function providerLabel(config: InstanceOAuth2Provider): string {
+  if (config.display_name) return config.display_name;
+  const provider = config.provider;
   switch (provider.toLowerCase()) {
     case "google":
       return "Google";

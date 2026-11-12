@@ -214,6 +214,7 @@ fn merge_oauth2_settings_sanitizes_paths_and_mappings() {
             redirect_path: None,
         }),
         microsoft: None,
+        providers: Default::default(),
         casbin: None,
         group_role_mappings: vec![],
     };
@@ -231,6 +232,7 @@ fn merge_oauth2_settings_sanitizes_paths_and_mappings() {
             redirect_path: Some("callback".into()),
         }),
         microsoft: None,
+        providers: Default::default(),
         casbin: None,
         group_role_mappings: vec![
             OAuth2GroupRoleMapping {
@@ -687,4 +689,204 @@ fn password_rules_accepts_any_when_no_constraints() {
 
     assert!(rules.validate(""));
     assert!(rules.validate("anything"));
+}
+
+#[test]
+fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
+    let current: OAuth2Settings = serde_json::from_value(json!({"providers":[{
+        "id":"company", "display_name":"Company", "issuer":"https://id.example", "client_id":"pkgly", "client_secret":"secret",
+        "endpoints":{"authorization_url":"https://id.example/auth","token_url":"https://id.example/token","jwks_url":"https://keys.example/jwks"}
+    }]})).unwrap();
+    let base = json!({"enabled":false,"login_path":"/api/user/oauth2/login","callback_path":"/api/user/oauth2/callback","auto_create_users":false});
+    let omitted: OAuth2SettingsRequest = serde_json::from_value(base.clone()).unwrap();
+    let retained = merge_oauth2_settings(Some(&current), omitted).unwrap();
+    assert_eq!(retained.providers[0].client_secret, "secret");
+    let response = serde_json::to_value(build_oauth2_response(&retained)).unwrap();
+    assert_eq!(response["providers"][0]["client_secret_configured"], true);
+    assert!(response["providers"][0].get("client_secret").is_none());
+    let mut update = base.clone();
+    let mut provider = serde_json::to_value(&current.providers[0]).unwrap();
+    provider.as_object_mut().unwrap().remove("client_secret");
+    update["providers"] = json!([provider.clone()]);
+    let merged = merge_oauth2_settings(
+        Some(&current),
+        serde_json::from_value(update.clone()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(merged.providers[0].client_secret, "secret");
+    update["providers"][0]["client_secret"] = serde_json::Value::Null;
+    assert_eq!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .unwrap()
+        .providers[0]
+            .client_secret,
+        "secret"
+    );
+    update["providers"][0]["client_secret"] = json!("replacement");
+    assert_eq!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .unwrap()
+        .providers[0]
+            .client_secret,
+        "replacement"
+    );
+    update["providers"][0]["client_secret"] = json!("");
+    assert!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .is_err()
+    );
+    update["providers"][0]["client_secret"] = serde_json::Value::Null;
+    update["providers"][0]["id"] = "new-id".into();
+    assert!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(update.clone()).unwrap()
+        )
+        .is_err()
+    );
+    update["providers"] = json!([]);
+    assert!(
+        merge_oauth2_settings(Some(&current), serde_json::from_value(update).unwrap())
+            .unwrap()
+            .providers
+            .is_empty()
+    );
+}
+
+#[test]
+fn generic_oidc_requires_explicit_secret_for_credential_binding_changes() {
+    let provider = json!({
+        "id": "company", "display_name": "Company", "issuer": "https://id.example",
+        "client_id": "pkgly", "client_secret": "stored",
+        "endpoints": {
+            "authorization_url": "https://id.example/auth",
+            "token_url": "https://id.example/token",
+            "jwks_url": "https://id.example/keys"
+        }
+    });
+    let current: OAuth2Settings = serde_json::from_value(json!({
+        "providers": [provider.clone()]
+    }))
+    .unwrap();
+    for (field, value) in [
+        ("/issuer", "https://issuer.example"),
+        ("/client_id", "new-client"),
+        ("/endpoints/token_url", "https://id.example/token-v2"),
+        ("/endpoints/token_url", "https://tokens.example/token"),
+    ] {
+        for enabled in [true, false] {
+            let mut changed = provider.clone();
+            *changed.pointer_mut(field).unwrap() = json!(value);
+            changed["enabled"] = json!(enabled);
+            changed.as_object_mut().unwrap().remove("client_secret");
+
+            let merge = |request: Value| {
+                let request = serde_json::from_value(json!([request])).unwrap();
+                merge_generic_settings(Some(&current), Some(request))
+            };
+            let error = merge(changed.clone()).unwrap_err();
+            assert!(error.contains("Re-enter"), "{field}: {error}");
+            changed["client_secret"] = Value::Null;
+            assert!(merge(changed.clone()).is_err(), "{field}");
+            changed["client_secret"] = json!("stored");
+            assert_eq!(merge(changed).unwrap()[0].client_secret, "stored");
+        }
+    }
+
+    let mut changed = provider;
+    changed["endpoints"]["authorization_url"] = json!("https://id.example/new-auth");
+    changed["endpoints"]["jwks_url"] = json!("https://id.example/new-keys");
+    changed["client_secret"] = Value::Null;
+    let request = serde_json::from_value(json!([changed])).unwrap();
+    let merged = merge_generic_settings(Some(&current), Some(request)).unwrap();
+    assert_eq!(merged[0].client_secret, "stored");
+}
+
+#[test]
+fn generic_oidc_admin_rejects_dangling_role_mappings() {
+    let current: OAuth2Settings = serde_json::from_value(json!({
+        "providers":[{"id":"company", "enabled":false}]
+    }))
+    .unwrap();
+    let mut payload = json!({"enabled":false, "providers":[], "login_path":"/api/user/oauth2/login", "callback_path":"/api/user/oauth2/callback", "auto_create_users":false, "group_role_mappings":[
+        {"provider":"company", "group":"staff", "roles":["read"]}
+    ]});
+    assert!(
+        merge_oauth2_settings(
+            Some(&current),
+            serde_json::from_value(payload.clone()).unwrap()
+        )
+        .is_err()
+    );
+    payload["group_role_mappings"] = json!([]);
+    assert!(
+        merge_oauth2_settings(Some(&current), serde_json::from_value(payload).unwrap()).is_ok()
+    );
+}
+
+#[tokio::test]
+async fn oidc_discovery_prefill_requires_an_admin_session_and_does_not_save() {
+    let _lock = DB_TEST_LOCK.lock().await;
+    let db = fresh_db().await;
+    let root = tempfile::tempdir().unwrap();
+    let site = build_site(&db, root.path(), SecuritySettings::default()).await;
+    let manager_id = insert_user(db.pool(), true).await;
+    let admin_id = insert_user(db.pool(), false).await;
+    sqlx::query("UPDATE users SET admin = true WHERE id = $1")
+        .bind(admin_id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let metadata = json!({
+        "issuer": issuer,
+        "authorization_endpoint": "https://issuer.example/authorize",
+        "token_endpoint": "https://token.example/token",
+        "jwks_uri": "https://keys.example/jwks",
+        "response_types_supported": ["code"],
+        "id_token_signing_alg_values_supported": ["RS256"]
+    });
+    let metadata_router = axum::Router::new().route(
+        "/.well-known/openid-configuration",
+        axum::routing::get(move || async move { Json(metadata) }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, metadata_router).await.unwrap() });
+    let router = security_routes().with_state(site.clone());
+    let request = |user_id| {
+        request_with_auth(
+            Method::POST,
+            "/oauth2/discover",
+            user_id,
+            Body::from(
+                json!({"issuer": issuer, "token_endpoint_auth_method": "client_secret_basic"})
+                    .to_string(),
+            ),
+        )
+    };
+
+    let denied = router.clone().oneshot(request(manager_id)).await.unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let discovered = router.oneshot(request(admin_id)).await.unwrap();
+    assert_eq!(discovered.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(discovered).await,
+        json!({
+            "authorization_url": "https://issuer.example/authorize",
+            "token_url": "https://token.example/token",
+            "jwks_url": "https://keys.example/jwks"
+        })
+    );
+    assert!(site.oauth2_settings_raw().is_none());
+    server.abort();
 }
