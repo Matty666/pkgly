@@ -1,4 +1,9 @@
-use axum::{Json, extract::State, response::Response, routing::get};
+use axum::{
+    Json,
+    extract::State,
+    response::Response,
+    routing::{get, post},
+};
 use nr_core::user::permissions::HasPermissions;
 use tracing::{error, instrument};
 use utoipa::{OpenApi, ToSchema};
@@ -6,12 +11,12 @@ use utoipa::{OpenApi, ToSchema};
 use crate::{
     app::{
         Pkgly,
-        authentication::Authentication,
-        authentication::oauth::normalize_scopes,
+        authentication::oauth::{discover_oidc_endpoints, normalize_scopes},
+        authentication::{Authentication, OnlySessionAllowedAuthentication},
         config::{
             OAuth2CasbinConfig, OAuth2GenericConfig, OAuth2GenericEndpoints, OAuth2GoogleConfig,
             OAuth2GroupRoleMapping, OAuth2MicrosoftConfig, OAuth2Settings, OidcProviderConfig,
-            PasswordRules, SsoSettings, TokenSource,
+            PasswordRules, SsoSettings, TokenSource, validate_oidc_issuer,
         },
     },
     error::InternalError,
@@ -27,6 +32,7 @@ use serde::{Deserialize, Serialize};
         get_sso_settings,
         update_sso_settings,
         get_oauth2_settings,
+        discover_oauth2_endpoints,
         update_oauth2_settings,
         get_password_rules,
         update_password_rules,
@@ -42,6 +48,7 @@ pub fn security_routes() -> axum::Router<Pkgly> {
             "/oauth2",
             get(get_oauth2_settings).put(update_oauth2_settings),
         )
+        .route("/oauth2/discover", post(discover_oauth2_endpoints))
         .route(
             "/password-rules",
             get(get_password_rules).put(update_password_rules),
@@ -57,6 +64,12 @@ struct OAuth2ProviderSettingsResponse {
     tenant_id: Option<String>,
     scopes: Vec<String>,
     client_secret_configured: bool,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+struct OidcDiscoveryRequest {
+    issuer: String,
+    token_endpoint_auth_method: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -581,6 +594,47 @@ pub async fn get_oauth2_settings(
     let settings = security.oauth2.unwrap_or_else(OAuth2Settings::default);
     let response = build_oauth2_response(&settings);
     Ok(ResponseBuilder::ok().json(&response))
+}
+
+/// Return discovered URLs for an administrator to review before saving.
+#[utoipa::path(
+    post,
+    path = "/oauth2/discover",
+    tag = "security",
+    request_body = OidcDiscoveryRequest,
+    responses(
+        (status = 200, description = "Discovered provider endpoints", body = OAuth2GenericEndpoints),
+        (status = 400, description = "Invalid issuer or client authentication method"),
+        (status = 403, description = "Administrator session required"),
+        (status = 502, description = "Could not use issuer metadata"),
+    ),
+    security(("session" = []))
+)]
+#[instrument(skip(auth, request), fields(project_module = "Security"))]
+async fn discover_oauth2_endpoints(
+    auth: OnlySessionAllowedAuthentication,
+    Json(request): Json<OidcDiscoveryRequest>,
+) -> Response {
+    if !auth.admin {
+        return ResponseBuilder::forbidden().body("Administrator permissions required");
+    }
+
+    let issuer = request.issuer.trim();
+    if let Err(message) = validate_oidc_issuer(issuer) {
+        return ResponseBuilder::bad_request().body(message);
+    }
+    let auth_method = request.token_endpoint_auth_method.as_str();
+    if !matches!(auth_method, "client_secret_basic" | "client_secret_post") {
+        return ResponseBuilder::bad_request()
+            .body("Unsupported OIDC client authentication method");
+    }
+
+    match discover_oidc_endpoints(issuer, auth_method).await {
+        Ok(endpoints) => ResponseBuilder::ok().json(&endpoints),
+        Err(message) => ResponseBuilder::default()
+            .status(http::StatusCode::BAD_GATEWAY)
+            .body(message),
+    }
 }
 
 #[utoipa::path(

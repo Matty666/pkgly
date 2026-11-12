@@ -187,7 +187,13 @@ describe("AdminSystem.vue", () => {
     });
   });
 
-  it("adds a generic provider and sends its configuration", async () => {
+  it("fills generic provider endpoints from discovery and saves them only on submit", async () => {
+    const endpoints = {
+      authorization_url: "https://id.example/authorize",
+      token_url: "https://tokens.example/token",
+      jwks_url: "https://keys.example/jwks",
+    };
+    httpPost.mockResolvedValue({ data: endpoints });
     httpPut.mockResolvedValue({});
     const module = await import("@/views/admin/AdminSystem.vue");
     const wrapper = mount(module.default, { global: { stubs } });
@@ -199,6 +205,16 @@ describe("AdminSystem.vue", () => {
     await wrapper.get('[data-testid="generic-client-id"] input').setValue("pkgly");
     await wrapper.get('[data-testid="generic-secret"] input').setValue("secret");
     await wrapper.get(".genericProviders select").setValue("client_secret_post");
+    await wrapper.get('[data-testid="discover-generic-endpoints"]').trigger("click");
+    await flushPromises();
+    expect(httpPost).toHaveBeenCalledWith("/api/security/oauth2/discover", {
+      issuer: "https://id.example",
+      token_endpoint_auth_method: "client_secret_post",
+    });
+    expect(
+      wrapper.get<HTMLInputElement>('[data-testid="generic-token-url"] input').element.value,
+    ).toBe(endpoints.token_url);
+    expect(httpPut).not.toHaveBeenCalled();
     await wrapper.get("form.oauthForm").trigger("submit");
     await flushPromises();
     expect(httpPut).toHaveBeenCalledWith(
@@ -212,10 +228,40 @@ describe("AdminSystem.vue", () => {
             client_id: "pkgly",
             client_secret: "secret",
             token_endpoint_auth_method: "client_secret_post",
+            endpoints,
           }),
         ],
       }),
     );
+  });
+
+  it("requires all URLs for an enabled generic provider", async () => {
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, { global: { stubs } });
+    await flushPromises();
+    await wrapper.get('[data-testid="add-generic-provider"]').trigger("click");
+    await wrapper
+      .get('[data-testid="generic-auth-url"] input')
+      .setValue("https://id.example/authorize");
+    await wrapper.get("form.oauthForm").trigger("submit");
+    expect(httpPut).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("Enter the authorization, token, and signing key URLs.");
+  });
+
+  it("keeps manually entered endpoints when discovery fails", async () => {
+    httpPost.mockRejectedValueOnce(new Error("Discovery unavailable"));
+    const module = await import("@/views/admin/AdminSystem.vue");
+    const wrapper = mount(module.default, { global: { stubs } });
+    await flushPromises();
+    await wrapper.get('[data-testid="add-generic-provider"]').trigger("click");
+    await wrapper.get('[data-testid="generic-issuer"] input').setValue("https://id.example");
+    const input = wrapper.get<HTMLInputElement>('[data-testid="generic-auth-url"] input');
+    await input.setValue("https://id.example/manual");
+    await wrapper.get('[data-testid="discover-generic-endpoints"]').trigger("click");
+    await flushPromises();
+    expect(input.element.value).toBe("https://id.example/manual");
+    expect(wrapper.text()).toContain("Unable to fetch OIDC endpoints");
+    expect(httpPut).not.toHaveBeenCalled();
   });
 
   it("places the full-width primary add action above custom provider cards", async () => {

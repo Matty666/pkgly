@@ -10,6 +10,7 @@ import { siteStore } from "@/stores/site";
 import type {
   OAuth2CasbinConfig,
   OAuth2Configuration,
+  OAuth2GenericEndpoints,
   OAuth2GroupRoleMapping,
   OAuth2ProviderKind,
   OidcProviderConfig,
@@ -116,7 +117,7 @@ interface OAuth2UpdatePayload {
     issuer: string;
     token_endpoint_auth_method: string;
     id_token_signing_alg: string;
-    endpoints: { authorization_url: string; token_url: string; jwks_url: string } | null;
+    endpoints: OAuth2GenericEndpoints | null;
   })[];
   casbin: OAuth2CasbinConfig | null;
   group_role_mappings: OAuth2GroupRoleMapping[];
@@ -131,6 +132,7 @@ const ssoInitialSignature = ref(JSON.stringify(toSsoPayload(ssoForm.value)));
 
 const oauthLoading = ref(true);
 const oauthSaving = ref(false);
+const discoveringProviders = ref(new Set<string>());
 const oauthForm = ref<EditableOAuthConfiguration>(defaultOAuthForm());
 const oauthInitialSignature = ref(JSON.stringify(oauthForm.value));
 const availableRoles = ref<string[]>([]);
@@ -299,8 +301,44 @@ async function saveSsoSettings() {
   }
 }
 
+async function discoverGenericEndpoints(provider: EditableGenericProvider) {
+  const issuer = provider.issuer.trim();
+  const authMethod = provider.token_endpoint_auth_method;
+  const pending = discoveringProviders.value;
+  if (!issuer || pending.has(provider.rowId) || oauthSaving.value) {
+    return;
+  }
+
+  resetError();
+  pending.add(provider.rowId);
+  try {
+    const { data } = await http.post<OAuth2GenericEndpoints>("/api/security/oauth2/discover", {
+      issuer,
+      token_endpoint_auth_method: authMethod,
+    });
+    if (
+      oauthForm.value.providers.includes(provider) &&
+      provider.issuer.trim() === issuer &&
+      provider.token_endpoint_auth_method === authMethod
+    ) {
+      provider.authorization_url = data.authorization_url;
+      provider.token_url = data.token_url;
+      provider.jwks_url = data.jwks_url;
+    }
+  } catch (error) {
+    const resolved = resolveRequestError(
+      error,
+      "Unable to fetch OIDC endpoints",
+      "Check the issuer URL or enter the endpoints manually.",
+    );
+    showError(resolved.title, resolved.message);
+  } finally {
+    pending.delete(provider.rowId);
+  }
+}
+
 async function saveOAuthSettings() {
-  if (oauthSaving.value) {
+  if (oauthSaving.value || discoveringProviders.value.size) {
     return;
   }
   resetError();
@@ -333,6 +371,19 @@ async function saveOAuthSettings() {
       showError("Microsoft client secret required", "Provide the Microsoft client secret.");
       return;
     }
+  }
+
+  if (
+    oauthForm.value.providers.some(
+      (provider) =>
+        provider.enabled &&
+        [provider.authorization_url, provider.token_url, provider.jwks_url].some(
+          (url) => !url.trim(),
+        ),
+    )
+  ) {
+    showError("OIDC endpoints required", "Enter the authorization, token, and signing key URLs.");
+    return;
   }
 
   oauthSaving.value = true;
@@ -1181,9 +1232,7 @@ function removeOidcProvider(id: string) {
         <section class="providerSection genericProviders">
           <header class="providerSection__header">
             <h3>Custom OIDC providers</h3>
-            <p class="hint">
-              Enter the issuer URL and client credentials. Pkgly discovers the endpoints.
-            </p>
+            <p class="hint">Enter the issuer URL, client credentials, and endpoints.</p>
             <v-btn
               data-testid="add-generic-provider"
               variant="outlined"
@@ -1263,25 +1312,47 @@ function removeOidcProvider(id: string) {
                 variant="outlined"
                 density="comfortable" />
             </div>
-            <details>
-              <summary>Explicit endpoints (optional)</summary>
-              <p>Leave all three fields blank for discovery, or supply all three URLs.</p>
+            <div>
+              <v-btn
+                data-testid="discover-generic-endpoints"
+                type="button"
+                variant="outlined"
+                color="primary"
+                :disabled="
+                  !provider.issuer.trim() || oauthSaving || discoveringProviders.has(provider.rowId)
+                "
+                :loading="discoveringProviders.has(provider.rowId)"
+                @click="discoverGenericEndpoints(provider)">
+                Fetch endpoints from issuer
+              </v-btn>
+              <p class="hint">Review the URLs before you save.</p>
+            </div>
+            <div class="grid">
               <TextInput
-                :id="`generic-auth-${provider.rowId}`"
+                :id="'generic-auth-' + provider.rowId"
+                data-testid="generic-auth-url"
                 v-model="provider.authorization_url"
+                :disabled="discoveringProviders.has(provider.rowId)"
+                :required="provider.enabled"
                 >Authorization URL</TextInput
               >
               <TextInput
-                :id="`generic-token-${provider.rowId}`"
+                :id="'generic-token-' + provider.rowId"
+                data-testid="generic-token-url"
                 v-model="provider.token_url"
+                :disabled="discoveringProviders.has(provider.rowId)"
+                :required="provider.enabled"
                 >Token URL</TextInput
               >
               <TextInput
-                :id="`generic-jwks-${provider.rowId}`"
+                :id="'generic-jwks-' + provider.rowId"
+                data-testid="generic-jwks-url"
                 v-model="provider.jwks_url"
+                :disabled="discoveringProviders.has(provider.rowId)"
+                :required="provider.enabled"
                 >Signing key URL</TextInput
               >
-            </details>
+            </div>
             <div class="providerActions">
               <v-btn
                 variant="text"
@@ -1360,7 +1431,7 @@ function removeOidcProvider(id: string) {
         <footer class="actions">
           <SubmitButton
             :block="false"
-            :disabled="!hasOAuthChanges || oauthSaving"
+            :disabled="!hasOAuthChanges || oauthSaving || discoveringProviders.size > 0"
             :loading="oauthSaving"
             prepend-icon="mdi-content-save"
             title="Save OAuth2 configuration">

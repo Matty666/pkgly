@@ -72,10 +72,6 @@ pub enum OAuth2ServiceError {
     InvalidState,
     #[error("Failed to construct OAuth2 client: {0}")]
     ClientConstruction(String),
-    #[error("OIDC discovery failed: {0}")]
-    DiscoveryFailed(String),
-    #[error("OIDC sign-in endpoints are no longer available")]
-    DiscoveryStateMissing,
     #[error("OAuth2 token request failed: {0}")]
     TokenRequestFailed(String),
 }
@@ -119,6 +115,15 @@ impl OAuth2Service {
                     .map_err(OAuth2ServiceError::ClientConstruction)?;
                 providers.insert(OAuth2ProviderKind::Microsoft, runtime);
             }
+        }
+
+        for config in settings.providers.iter().filter(|config| config.enabled) {
+            let endpoints = config.endpoints.clone().ok_or_else(|| {
+                OAuth2ServiceError::ClientConstruction("OIDC endpoints are required".into())
+            })?;
+            let runtime = generic::runtime(config, &settings, endpoints)
+                .map_err(OAuth2ServiceError::ClientConstruction)?;
+            providers.insert(runtime.provider.clone(), runtime);
         }
 
         if providers.is_empty() && settings.providers.is_empty() {
@@ -243,50 +248,22 @@ impl OAuth2Service {
     fn resolve_provider(
         &self,
         provider: &OAuth2ProviderKind,
-        discovered: Option<OAuth2GenericEndpoints>,
     ) -> Result<OAuth2ProviderRuntime, OAuth2ServiceError> {
-        let Some(config) = self.generic_config(provider) else {
-            return self
-                .providers
-                .get(provider)
-                .cloned()
-                .ok_or_else(|| OAuth2ServiceError::ProviderNotConfigured(provider.clone()));
-        };
-        let endpoints = match (&config.endpoints, discovered) {
-            (Some(endpoints), _) => endpoints.clone(),
-            (None, Some(endpoints)) => {
-                endpoints
-                    .validate()
-                    .map_err(|_| OAuth2ServiceError::InvalidState)?;
-                endpoints
-            }
-            (None, None) => return Err(OAuth2ServiceError::DiscoveryStateMissing),
-        };
-        generic::runtime(config, &self.settings, endpoints)
-            .map_err(OAuth2ServiceError::ClientConstruction)
+        self.providers
+            .get(provider)
+            .cloned()
+            .ok_or_else(|| OAuth2ServiceError::ProviderNotConfigured(provider.clone()))
     }
 
-    /// Resolve the provider for this sign-in and start authorization with PKCE and a nonce.
-    /// Returns an error for unknown providers, discovery failures, or invalid callback URLs.
-    pub async fn begin_authorization(
+    /// Start authorization with the saved provider configuration, PKCE, and a nonce.
+    /// Returns an error for unknown providers or invalid callback URLs.
+    pub fn begin_authorization(
         &self,
         provider: OAuth2ProviderKind,
         base_url: Option<&str>,
         redirect: Option<String>,
     ) -> Result<AuthorizationRedirect, OAuth2ServiceError> {
-        let discovered = if let Some(config) = self.generic_config(&provider)
-            && config.endpoints.is_none()
-        {
-            Some(
-                generic::discover(config, &self.http_client)
-                    .await
-                    .map_err(OAuth2ServiceError::DiscoveryFailed)?,
-            )
-        } else {
-            None
-        };
-        let runtime = self.resolve_provider(&provider, discovered)?;
-        self.authorization_redirect(runtime, base_url, redirect)
+        self.authorization_redirect(self.resolve_provider(&provider)?, base_url, redirect)
     }
 
     fn authorization_redirect(
@@ -324,11 +301,6 @@ impl OAuth2Service {
             .map_err(OAuth2ServiceError::ClientConstruction)?;
         let (auth_url, csrf_token) = request.set_pkce_challenge(pkce_challenge).url();
 
-        let discovered_endpoints = runtime
-            .generic
-            .as_ref()
-            .filter(|config| config.endpoints.is_none())
-            .and(runtime.endpoints);
         self.save_state(
             csrf_token.secret(),
             OAuthStateValue {
@@ -336,7 +308,6 @@ impl OAuth2Service {
                 nonce,
                 callback_uri: Some(redirect_url.to_string()),
                 config_fingerprint: fingerprint,
-                discovered_endpoints,
                 pkce_verifier,
                 redirect,
                 created_at: Instant::now(),
@@ -371,14 +342,13 @@ impl OAuth2Service {
                 nonce: state_value.nonce,
                 callback_uri: state_value.callback_uri,
                 config_fingerprint: state_value.config_fingerprint,
-                discovered_endpoints: state_value.discovered_endpoints,
             },
         )
         .await
     }
 
     /// Exchange a code after the caller atomically consumes persisted state.
-    /// Returns an error for missing endpoints, configuration changes, or failed token exchange.
+    /// Returns an error for configuration changes or a failed token exchange.
     pub async fn exchange_code_with_export(
         &self,
         base_url: Option<&str>,
@@ -392,9 +362,8 @@ impl OAuth2Service {
             nonce,
             callback_uri,
             config_fingerprint,
-            discovered_endpoints,
         } = export;
-        let runtime = self.resolve_provider(&provider, discovered_endpoints)?;
+        let runtime = self.resolve_provider(&provider)?;
         let redirect_url = self
             .build_redirect_url(&runtime, base_url)
             .map_err(OAuth2ServiceError::InvalidRedirectUrl)?;
@@ -495,7 +464,6 @@ pub struct OAuthStateExport {
     pub nonce: Option<String>,
     pub callback_uri: Option<String>,
     pub config_fingerprint: Option<String>,
-    pub discovered_endpoints: Option<OAuth2GenericEndpoints>,
 }
 
 #[derive(Default)]
@@ -526,7 +494,6 @@ impl OAuthStateStore {
             nonce: value.nonce.clone(),
             callback_uri: value.callback_uri.clone(),
             config_fingerprint: value.config_fingerprint.clone(),
-            discovered_endpoints: value.discovered_endpoints.clone(),
         })
     }
 }
@@ -543,7 +510,6 @@ struct OAuthStateValue {
     nonce: Option<String>,
     callback_uri: Option<String>,
     config_fingerprint: Option<String>,
-    discovered_endpoints: Option<OAuth2GenericEndpoints>,
     created_at: Instant,
 }
 
@@ -718,6 +684,15 @@ impl<'c> oauth2::AsyncHttpClient<'c> for PolicyHttpClient {
     fn call(&'c self, request: oauth2::HttpRequest) -> Self::Future {
         Box::pin(token_request(&self.0, request))
     }
+}
+
+/// Fetch metadata from a validated issuer URL without sending client credentials.
+pub(crate) async fn discover_oidc_endpoints(
+    issuer: &str,
+    auth_method: &str,
+) -> Result<OAuth2GenericEndpoints, String> {
+    let client = oauth_http_client().map_err(|error| error.to_string())?;
+    generic::discover(issuer, auth_method, &client).await
 }
 
 fn oauth_http_client() -> Result<HttpClient, OAuth2ServiceError> {

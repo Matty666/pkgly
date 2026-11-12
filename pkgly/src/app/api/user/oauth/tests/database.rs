@@ -8,7 +8,7 @@ use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicUsize, Ordering},
 };
 use testcontainers::{Container, clients::Cli, images::generic::GenericImage};
 
@@ -148,32 +148,21 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     let token = Arc::new(parking_lot::Mutex::new(String::new()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("http://{}", listener.local_addr().unwrap());
-    let metadata = json!({"issuer":issuer,"authorization_endpoint":format!("{issuer}/arbitrary/auth"),
-        "token_endpoint":format!("{issuer}/arbitrary/token"),"jwks_uri":format!("{issuer}/arbitrary/keys"),
-        "response_types_supported":["code"],"id_token_signing_alg_values_supported":["RS256"],"token_endpoint_auth_methods_supported":["client_secret_basic","client_secret_post"]});
     let partner_token = token.clone();
     let partner_keys = keys.clone();
     let keys_server = keys.clone();
     let token_server = token.clone();
     let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let requests_server = requests.clone();
-    let discovery_online = Arc::new(AtomicBool::new(true));
     let discovery_requests = Arc::new(AtomicUsize::new(0));
     let key_requests = Arc::new(AtomicUsize::new(0));
-    let discovery_status = discovery_online.clone();
     let discovery_counter = discovery_requests.clone();
     let key_counter = key_requests.clone();
     let partner_key_counter = key_requests.clone();
     let app=axum::Router::new()
         .route("/.well-known/openid-configuration", axum::routing::get(move || {
             discovery_counter.fetch_add(1, Ordering::SeqCst);
-            let status = if discovery_status.load(Ordering::SeqCst) {
-                StatusCode::OK
-            } else {
-                StatusCode::SERVICE_UNAVAILABLE
-            };
-            let metadata = metadata.clone();
-            async move { (status, axum::Json(metadata)) }
+            async { StatusCode::SERVICE_UNAVAILABLE }
         }))
         .route("/arbitrary/keys",axum::routing::get(move || {
             key_counter.fetch_add(1, Ordering::SeqCst);
@@ -202,7 +191,9 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         axum::serve(listener, app).await.unwrap();
     });
     let mut settings: OAuth2Settings=serde_json::from_value(json!({"enabled":true,"redirect_base_url":"https://pkgly.example","casbin":null,
-        "providers":[{"id":"company","display_name":"Company sign-in","issuer":issuer,"client_id":"pkgly","client_secret":"secret"}]})).unwrap();
+        "providers":[{"id":"company","display_name":"Company sign-in","issuer":issuer,"client_id":"pkgly","client_secret":"secret",
+            "endpoints":{"authorization_url":format!("{issuer}/arbitrary/authorize"),
+                "token_url":format!("{issuer}/arbitrary/token"),"jwks_url":format!("{issuer}/arbitrary/keys")}}]})).unwrap();
     let mut partner = settings.providers[0].clone();
     partner.id = "partner-login".into();
     partner.display_name = "Partner account".into();
@@ -219,69 +210,6 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     let public = list_providers(State(site.clone())).await.unwrap();
     assert_eq!(public.status(), StatusCode::OK);
     assert_eq!(discovery_requests.load(Ordering::SeqCst), 0);
-    discovery_online.store(false, Ordering::SeqCst);
-    let failed_login = authorize(
-        State(site.clone()),
-        Path("company".into()),
-        Query(OAuthAuthorizeQuery { redirect: None }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(failed_login.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(discovery_requests.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        site.instance
-            .lock()
-            .oauth2
-            .as_ref()
-            .unwrap()
-            .providers
-            .len(),
-        2
-    );
-    discovery_online.store(true, Ordering::SeqCst);
-
-    let service = site.oauth2_service().unwrap();
-    let interrupted = service
-        .begin_authorization("company".parse().unwrap(), None, None)
-        .await
-        .unwrap();
-    let mut state = service.export_state(&interrupted.state).unwrap();
-    state.discovered_endpoints = None;
-    persist_oauth_state(&site, &interrupted.state, &state)
-        .await
-        .unwrap();
-    service.forget_state(&interrupted.state);
-    let discovery_before = discovery_requests.load(Ordering::SeqCst);
-    let interrupted_response = callback(
-        State(site.clone()),
-        Extension(AccessLogContext::default()),
-        ConnectInfo("127.0.0.1:1234".parse().unwrap()),
-        None,
-        Query(OAuthCallbackQuery {
-            code: Some("code".into()),
-            state: Some(interrupted.state.clone()),
-            error: None,
-            error_description: None,
-            redirect: None,
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(interrupted_response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        interrupted_response.headers()[LOCATION],
-        "/login?oauth_error=discovery_state_missing"
-    );
-    assert!(requests.lock().is_empty());
-    assert_eq!(discovery_requests.load(Ordering::SeqCst), discovery_before);
-    assert!(
-        load_persisted_oauth_state(&site, &interrupted.state)
-            .await
-            .unwrap()
-            .is_none()
-    );
-
     // Verified email wins over a different username. Missing/false verification uses the existing username fallback.
     for (verified, expected, inactive, method, provider_index) in [
         (Some(true), first, false, "client_secret_basic", 0),
@@ -309,10 +237,8 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         let service = site.oauth2_service().unwrap();
         let auth = service
             .begin_authorization(provider_id.parse().unwrap(), None, Some("/browse".into()))
-            .await
             .unwrap();
         let snapshot = service.export_state(&auth.state).unwrap();
-        assert_eq!(snapshot.discovered_endpoints.is_some(), provider_index == 0);
         persist_oauth_state(&site, &auth.state, &snapshot)
             .await
             .unwrap();
@@ -332,7 +258,6 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         }
         *token.lock() = jsonwebtoken::encode(&header, &claims, &encoding).unwrap();
         // A new application instance has the database state and an empty memory store.
-        discovery_online.store(false, Ordering::SeqCst);
         let callback_root = tempfile::tempdir().unwrap();
         let callback_site = if verified == Some(true) && !inactive {
             test_site(port, callback_root.path()).await
@@ -355,12 +280,8 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         )
         .await
         .unwrap();
-        discovery_online.store(true, Ordering::SeqCst);
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(
-            discovery_requests.load(Ordering::SeqCst),
-            discovery_before + usize::from(provider_index == 0)
-        );
+        assert_eq!(discovery_requests.load(Ordering::SeqCst), discovery_before);
         assert_eq!(key_requests.load(Ordering::SeqCst), key_requests_before + 1);
         if inactive {
             assert!(
@@ -443,7 +364,6 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     let service = site.oauth2_service().unwrap();
     let auth = service
         .begin_authorization("company".parse().unwrap(), None, None)
-        .await
         .unwrap();
     let snapshot = service.export_state(&auth.state).unwrap();
     persist_oauth_state(&site, &auth.state, &snapshot)

@@ -30,7 +30,7 @@ fn generic_oidc_configuration_preserves_builtins_and_custom_ids() {
     let settings: super::OAuth2Settings = serde_json::from_value(serde_json::json!({
         "google": {"client_id": "google-client", "client_secret": "google-secret"},
         "providers": [{"id": "company-sso", "display_name": "Company", "issuer": "https://id.example/team",
-            "client_id": "pkgly", "client_secret": "secret"}]
+            "client_id": "pkgly", "client_secret": "secret", "endpoints":{"authorization_url":"https://id.example/auth","token_url":"https://id.example/token","jwks_url":"https://keys.example/jwks"}}]
     })).unwrap();
     settings.validate_providers().unwrap();
     assert!(settings.google.is_some());
@@ -44,7 +44,7 @@ fn generic_oidc_configuration_preserves_builtins_and_custom_ids() {
 #[test]
 fn generic_oidc_configuration_rejects_invalid_contracts() {
     let valid = serde_json::json!({"id": "company-sso", "display_name": "Company", "issuer": "https://id.example",
-        "client_id": "pkgly", "client_secret": "secret"});
+        "client_id": "pkgly", "client_secret": "secret", "endpoints":{"authorization_url":"https://id.example/auth","token_url":"https://id.example/token","jwks_url":"https://keys.example/jwks"}});
     for (field, value) in [
         ("id", "Google"),
         ("id", "entra_id"),
@@ -94,4 +94,19 @@ fn generic_oidc_role_mappings_require_configured_custom_provider_ids() {
     assert!(settings.validate_providers().is_err());
     settings.group_role_mappings.remove(0);
     assert!(settings.validate_providers().is_ok());
+}
+
+#[test]
+fn enabled_generic_oidc_provider_requires_saved_endpoints() {
+    let mut provider: super::OAuth2GenericConfig = serde_json::from_value(serde_json::json!({
+        "id": "company", "display_name": "Company", "issuer": "https://id.example",
+        "client_id": "pkgly", "client_secret": "secret"
+    }))
+    .unwrap();
+    assert_eq!(
+        provider.validate().unwrap_err(),
+        "OIDC authorization, token, and signing key URLs are required"
+    );
+    provider.enabled = false;
+    assert!(provider.validate().is_ok());
 }

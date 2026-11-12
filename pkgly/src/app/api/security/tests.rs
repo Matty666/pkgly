@@ -694,7 +694,8 @@ fn password_rules_accepts_any_when_no_constraints() {
 #[test]
 fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
     let current: OAuth2Settings = serde_json::from_value(json!({"providers":[{
-        "id":"company", "display_name":"Company", "issuer":"https://id.example", "client_id":"pkgly", "client_secret":"secret"
+        "id":"company", "display_name":"Company", "issuer":"https://id.example", "client_id":"pkgly", "client_secret":"secret",
+        "endpoints":{"authorization_url":"https://id.example/auth","token_url":"https://id.example/token","jwks_url":"https://keys.example/jwks"}
     }]})).unwrap();
     let base = json!({"enabled":false,"login_path":"/api/user/oauth2/login","callback_path":"/api/user/oauth2/callback","auto_create_users":false});
     let omitted: OAuth2SettingsRequest = serde_json::from_value(base.clone()).unwrap();
@@ -781,4 +782,62 @@ fn generic_oidc_admin_rejects_dangling_role_mappings() {
     assert!(
         merge_oauth2_settings(Some(&current), serde_json::from_value(payload).unwrap()).is_ok()
     );
+}
+
+#[tokio::test]
+async fn oidc_discovery_prefill_requires_an_admin_session_and_does_not_save() {
+    let _lock = DB_TEST_LOCK.lock().await;
+    let db = fresh_db().await;
+    let root = tempfile::tempdir().unwrap();
+    let site = build_site(&db, root.path(), SecuritySettings::default()).await;
+    let manager_id = insert_user(db.pool(), true).await;
+    let admin_id = insert_user(db.pool(), false).await;
+    sqlx::query("UPDATE users SET admin = true WHERE id = $1")
+        .bind(admin_id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let metadata = json!({
+        "issuer": issuer,
+        "authorization_endpoint": "https://issuer.example/authorize",
+        "token_endpoint": "https://token.example/token",
+        "jwks_uri": "https://keys.example/jwks",
+        "response_types_supported": ["code"],
+        "id_token_signing_alg_values_supported": ["RS256"]
+    });
+    let metadata_router = axum::Router::new().route(
+        "/.well-known/openid-configuration",
+        axum::routing::get(move || async move { Json(metadata) }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, metadata_router).await.unwrap() });
+    let router = security_routes().with_state(site.clone());
+    let request = |user_id| {
+        request_with_auth(
+            Method::POST,
+            "/oauth2/discover",
+            user_id,
+            Body::from(
+                json!({"issuer": issuer, "token_endpoint_auth_method": "client_secret_basic"})
+                    .to_string(),
+            ),
+        )
+    };
+
+    let denied = router.clone().oneshot(request(manager_id)).await.unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let discovered = router.oneshot(request(admin_id)).await.unwrap();
+    assert_eq!(discovered.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(discovered).await,
+        json!({
+            "authorization_url": "https://issuer.example/authorize",
+            "token_url": "https://token.example/token",
+            "jwks_url": "https://keys.example/jwks"
+        })
+    );
+    assert!(site.oauth2_settings_raw().is_none());
+    server.abort();
 }

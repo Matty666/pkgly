@@ -390,7 +390,7 @@ pub struct OAuth2GenericConfig {
     pub scopes: Vec<String>,
     /// Optional callback override.
     pub redirect_path: Option<String>,
-    /// Complete endpoint configuration, or None for issuer discovery.
+    /// Saved endpoints. Required when the provider is enabled.
     pub endpoints: Option<OAuth2GenericEndpoints>,
     /// Supported client authentication method: client_secret_basic or client_secret_post.
     pub token_endpoint_auth_method: String,
@@ -416,7 +416,7 @@ impl Default for OAuth2GenericConfig {
     }
 }
 
-/// Explicit endpoints used instead of discovery metadata.
+/// Endpoints approved in the provider configuration.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OAuth2GenericEndpoints {
@@ -463,6 +463,13 @@ pub(crate) fn validate_oidc_url(value: &str) -> Result<url::Url, String> {
     Ok(url)
 }
 
+pub(crate) fn validate_oidc_issuer(value: &str) -> Result<(), String> {
+    if validate_oidc_url(value)?.query().is_some() {
+        return Err("OIDC issuer cannot contain a query".into());
+    }
+    Ok(())
+}
+
 impl OAuth2GenericConfig {
     /// Validate configuration. Disabled providers still require a valid ID.
     /// Returns an error for missing credentials, unsupported options, or invalid URLs.
@@ -479,10 +486,7 @@ impl OAuth2GenericConfig {
         {
             return Err("OIDC display name and client credentials are required".into());
         }
-        let issuer = validate_oidc_url(&self.issuer)?;
-        if issuer.query().is_some() {
-            return Err("OIDC issuer cannot contain a query".into());
-        }
+        validate_oidc_issuer(&self.issuer)?;
         if !self.scopes.iter().any(|scope| scope == "openid") {
             return Err("OIDC scopes must include openid".into());
         }
@@ -492,10 +496,10 @@ impl OAuth2GenericConfig {
         {
             return Err("Unsupported OIDC authentication method or signing algorithm".into());
         }
-        if let Some(endpoints) = &self.endpoints {
-            endpoints.validate()?;
-        }
-        Ok(())
+        self.endpoints
+            .as_ref()
+            .ok_or("OIDC authorization, token, and signing key URLs are required")?
+            .validate()
     }
 }
 impl OAuth2GenericEndpoints {

@@ -15,7 +15,14 @@ fn generic_oidc_metadata_requires_exact_issuer_and_supported_options() {
     let valid = json!({"issuer": config.issuer, "authorization_endpoint":"https://issuer.example/auth",
         "token_endpoint":"https://issuer.example/token", "jwks_uri":"https://issuer.example/keys",
         "response_types_supported":["code"], "id_token_signing_alg_values_supported":["RS256"]});
-    assert!(resolve_metadata(&config, valid.clone()).is_ok());
+    assert!(
+        resolve_metadata(
+            &config.issuer,
+            &config.token_endpoint_auth_method,
+            valid.clone()
+        )
+        .is_ok()
+    );
     for (field, value) in [
         ("issuer", json!("https://issuer.example/team/")),
         ("token_endpoint", json!("http://issuer.example/token")),
@@ -32,7 +39,10 @@ fn generic_oidc_metadata_requires_exact_issuer_and_supported_options() {
     ] {
         let mut metadata = valid.clone();
         metadata[field] = value;
-        assert!(resolve_metadata(&config, metadata).is_err(), "{field}");
+        assert!(
+            resolve_metadata(&config.issuer, &config.token_endpoint_auth_method, metadata).is_err(),
+            "{field}"
+        );
     }
 }
 
@@ -140,19 +150,56 @@ async fn generic_oidc_discovery_rejects_malformed_timeout_and_blocked_requests()
         ..Default::default()
     };
     assert_eq!(
-        discover(&config, &client).await.unwrap_err(),
+        discover(&config.issuer, &config.token_endpoint_auth_method, &client)
+            .await
+            .unwrap_err(),
         "Invalid OIDC discovery metadata"
     );
     config.issuer = format!("{issuer}/slow");
     assert_eq!(
-        discover(&config, &client).await.unwrap_err(),
+        discover(&config.issuer, &config.token_endpoint_auth_method, &client)
+            .await
+            .unwrap_err(),
         "OIDC discovery request failed"
     );
     config.issuer = "https://10.1.2.3".into();
     assert!(crate::utils::egress::validate_url(&Url::parse(&config.issuer).unwrap()).is_err());
     assert_eq!(
-        discover(&config, &client).await.unwrap_err(),
+        discover(&config.issuer, &config.token_endpoint_auth_method, &client)
+            .await
+            .unwrap_err(),
         "OIDC discovery request failed"
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn generic_oidc_discovery_prefill_limits_response_size_and_disallows_redirects() {
+    use axum::{Router, response::Redirect, routing::get};
+
+    let app = Router::new()
+        .route(
+            "/large/.well-known/openid-configuration",
+            get(|| async { " ".repeat(256 * 1024 + 1) }),
+        )
+        .route(
+            "/redirect/.well-known/openid-configuration",
+            get(|| async { Redirect::temporary("/large/.well-known/openid-configuration") }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    for (path, error) in [
+        ("large", "OIDC discovery metadata exceeds the size limit"),
+        ("redirect", "OIDC discovery returned an error status"),
+    ] {
+        assert_eq!(
+            discover_oidc_endpoints(&format!("{issuer}/{path}"), "client_secret_basic")
+                .await
+                .unwrap_err(),
+            error
+        );
+    }
     server.abort();
 }

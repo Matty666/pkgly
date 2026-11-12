@@ -46,7 +46,6 @@ async fn oauth_service_generates_authorization_url() {
             settings.redirect_base_url.as_deref(),
             Some("/welcome".to_string()),
         )
-        .await
         .expect("authorization URL should be generated");
 
     assert!(
@@ -80,7 +79,6 @@ async fn generic_oidc_authorization_uses_configuration_and_persists_nonce() {
         let provider = id.parse().unwrap();
         let redirect = service
             .begin_authorization(provider, None, Some("/browse".into()))
-            .await
             .unwrap();
         assert_eq!(redirect.authorization_url.path(), "/unusual/authorize");
         let params: std::collections::HashMap<_, _> =
@@ -110,7 +108,6 @@ async fn generic_oidc_disabled_provider_is_not_advertised() {
     assert!(
         service
             .begin_authorization("unused".parse().unwrap(), None, None)
-            .await
             .is_err()
     );
 }
@@ -123,7 +120,6 @@ async fn generic_oidc_rejects_missing_nonce_and_removed_provider_before_exchange
     let service = OAuth2Service::new(settings).unwrap().unwrap();
     let auth = service
         .begin_authorization("company".parse().unwrap(), None, None)
-        .await
         .unwrap();
     let snapshot = service.export_state(&auth.state).unwrap();
     for missing in [
@@ -173,72 +169,20 @@ async fn generic_oidc_can_disable_the_last_custom_provider() {
     assert!(
         service
             .begin_authorization("company".parse().unwrap(), None, None)
-            .await
             .is_err()
     );
 }
 
-#[tokio::test]
-async fn generic_oidc_discovers_on_each_login_attempt() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let discovery_attempts = attempts.clone();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let issuer = format!("http://{}", listener.local_addr().unwrap());
-    let endpoint_issuer = issuer.clone();
-    let app = axum::Router::new().route(
-        "/.well-known/openid-configuration",
-        axum::routing::get(move || {
-            let issuer = endpoint_issuer.clone();
-            let attempt = discovery_attempts.fetch_add(1, Ordering::SeqCst);
-            async move {
-                let status = if attempt == 0 {
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE
-                } else {
-                    axum::http::StatusCode::OK
-                };
-                (
-                    status,
-                    axum::Json(serde_json::json!({
-                        "issuer": issuer,
-                        "authorization_endpoint": format!("{issuer}/authorize/{attempt}"),
-                        "token_endpoint": format!("{issuer}/token"),
-                        "jwks_uri": format!("{issuer}/keys"),
-                        "response_types_supported": ["code"],
-                        "id_token_signing_alg_values_supported": ["RS256"],
-                    })),
-                )
-            }
-        }),
-    );
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+#[test]
+fn generic_oidc_login_rejects_provider_with_missing_endpoints() {
     let mut settings = google_settings();
     settings.providers = serde_json::from_value(serde_json::json!([{
-        "id": "company", "display_name": "Company", "issuer": issuer,
+        "id": "company", "display_name": "Company", "issuer": "https://issuer.example",
         "client_id": "client", "client_secret": "secret"
     }]))
     .unwrap();
-    let service = OAuth2Service::new(settings).unwrap().unwrap();
-    assert_eq!(attempts.load(Ordering::SeqCst), 0);
-    assert_eq!(service.provider_descriptors().len(), 2);
-    let provider: OAuth2ProviderKind = "company".parse().unwrap();
-    assert!(
-        service
-            .begin_authorization(provider.clone(), None, None)
-            .await
-            .is_err()
-    );
-    assert_eq!(service.provider_descriptors().len(), 2);
-    for attempt in 1..=2 {
-        let redirect = service
-            .begin_authorization(provider.clone(), None, None)
-            .await
-            .unwrap();
-        assert_eq!(
-            redirect.authorization_url.path(),
-            format!("/authorize/{attempt}")
-        );
-    }
-    assert_eq!(attempts.load(Ordering::SeqCst), 3);
-    server.abort();
+    assert!(matches!(
+        OAuth2Service::new(settings),
+        Err(OAuth2ServiceError::ClientConstruction(_))
+    ));
 }

@@ -15,6 +15,8 @@ Each card has a red **Remove provider** button with a delete icon at the bottom 
 Use the **Client authentication** dropdown to choose HTTP Basic or request-body credentials.
 The dropdown has a floating label and matches the adjacent text fields.
 Supply a stable provider ID, login label, issuer URL, client ID, and client secret.
+Enter all three endpoint URLs, or select **Fetch endpoints from issuer** to fill them in.
+Review the URLs before you save.
 Register the Pkgly callback URI with your identity provider: `https://packages.example.com/api/user/oauth2/callback`.
 Enable OAuth2 and the provider, then save the settings. Changes apply without a restart.
 
@@ -36,6 +38,11 @@ client_secret = "<supply securely>"
 scopes = ["openid", "profile", "email"]
 token_endpoint_auth_method = "client_secret_basic"
 id_token_signing_alg = "RS256"
+
+[security.oauth2.providers.endpoints]
+authorization_url = "https://identity.example.com/authorize"
+token_url = "https://identity.example.com/token"
+jwks_url = "https://identity.example.com/keys"
 ```
 
 Database settings saved through the admin API take priority over file settings at startup.
@@ -57,34 +64,22 @@ This release supports confidential clients with `client_secret_basic` or `client
 Scopes must include `openid`. Public clients, encrypted ID tokens, UserInfo, and custom identity claim names are unsupported.
 Configure providers to return the required standard identity claims in the ID token.
 
-Leave all three fields under **Explicit endpoints** blank to use discovery. Pkgly fetches the metadata when the user selects that provider. Each new sign-in makes a fresh request. Startup and settings saves check local configuration.
-The discovered issuer must match the configured issuer exactly, including its path and trailing slash.
-Discovery must advertise the authorization-code flow, RS256, and the configured client authentication method.
-Omitted authentication methods default to `client_secret_basic`.
+An enabled provider requires an authorization URL, a token URL, and a signing key URL.
+These correspond to the provider metadata fields `authorization_endpoint`, `token_endpoint`, and `jwks_uri`.
+The URLs can use different paths or hosts. Check the provider's documentation before you save URLs on a different host.
 
-To use explicit endpoints, supply all three URLs. Use the values from the provider's metadata. Set **Authorization URL** to `authorization_endpoint`, **Token URL** to `token_endpoint`, and **Signing key URL** to `jwks_uri`.
-The issuer is still required for ID-token verification. Pkgly uses the supplied URLs directly and skips discovery. Update them in Pkgly if the provider changes its URLs.
+**Fetch endpoints from issuer** requires an administrator session. Pkgly sends a metadata request to
+the configured issuer and checks that the response declares the exact same issuer URL.
+The request sends no client credentials. Pkgly fills the form, and **Save** applies the settings.
+If the fetch fails, you can enter the three URLs manually. The current saved settings stay in effect.
 
-The same fields are available in the configuration file:
+Sign-in uses the saved endpoints. If the provider changes its URLs, fetch them again or enter the new values and save.
+Pkgly fetches the current signing keys from the saved URL at each callback. Later requests use the Pkgly session.
 
-```toml
-[security.oauth2.providers.endpoints]
-authorization_url = "https://identity.example.com/authorize"
-token_url = "https://identity.example.com/token"
-jwks_url = "https://identity.example.com/keys"
-```
-
-All three URLs are required. They can use different paths or hosts, subject to outbound network policy.
-Issuer and endpoint URLs require HTTPS without embedded credentials or fragments. The issuer cannot contain a query string.
-Discovery and token requests have a ten-second timeout. Signing-key requests have a five-second timeout.
-Token requests do not follow redirects. Private destinations need explicit exceptions in `security.egress`.
-
-If discovery fails, the provider button stays visible. That sign-in returns HTTP 503. The user can return to the login page and try again.
-A failed settings update retains the previous settings and clients.
-
-With discovery, Pkgly saves the resolved URLs on the one-time login record. A callback can reuse them after a Pkgly restart while that record is valid. Each new sign-in runs discovery again.
-With explicit endpoints, the callback uses the configured URLs. The login record needs no discovered URLs.
-Both modes fetch fresh signing keys when the callback verifies the ID token. Subsequent requests use the Pkgly session.
+Issuer and endpoint URLs require HTTPS without embedded credentials or fragments.
+The issuer cannot contain a query string. Private destinations require explicit exceptions in `security.egress`.
+Metadata and token requests have a ten-second timeout. Signing-key requests have a five-second timeout.
+These requests reject redirects.
 
 ## Login checks and account matching
 
