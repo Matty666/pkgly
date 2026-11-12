@@ -763,6 +763,55 @@ fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
 }
 
 #[test]
+fn generic_oidc_requires_explicit_secret_for_credential_binding_changes() {
+    let provider = json!({
+        "id": "company", "display_name": "Company", "issuer": "https://id.example",
+        "client_id": "pkgly", "client_secret": "stored",
+        "endpoints": {
+            "authorization_url": "https://id.example/auth",
+            "token_url": "https://id.example/token",
+            "jwks_url": "https://id.example/keys"
+        }
+    });
+    let current: OAuth2Settings = serde_json::from_value(json!({
+        "providers": [provider.clone()]
+    }))
+    .unwrap();
+    for (field, value) in [
+        ("/issuer", "https://issuer.example"),
+        ("/client_id", "new-client"),
+        ("/endpoints/token_url", "https://id.example/token-v2"),
+        ("/endpoints/token_url", "https://tokens.example/token"),
+    ] {
+        for enabled in [true, false] {
+            let mut changed = provider.clone();
+            *changed.pointer_mut(field).unwrap() = json!(value);
+            changed["enabled"] = json!(enabled);
+            changed.as_object_mut().unwrap().remove("client_secret");
+
+            let merge = |request: Value| {
+                let request = serde_json::from_value(json!([request])).unwrap();
+                merge_generic_settings(Some(&current), Some(request))
+            };
+            let error = merge(changed.clone()).unwrap_err();
+            assert!(error.contains("Re-enter"), "{field}: {error}");
+            changed["client_secret"] = Value::Null;
+            assert!(merge(changed.clone()).is_err(), "{field}");
+            changed["client_secret"] = json!("stored");
+            assert_eq!(merge(changed).unwrap()[0].client_secret, "stored");
+        }
+    }
+
+    let mut changed = provider;
+    changed["endpoints"]["authorization_url"] = json!("https://id.example/new-auth");
+    changed["endpoints"]["jwks_url"] = json!("https://id.example/new-keys");
+    changed["client_secret"] = Value::Null;
+    let request = serde_json::from_value(json!([changed])).unwrap();
+    let merged = merge_generic_settings(Some(&current), Some(request)).unwrap();
+    assert_eq!(merged[0].client_secret, "stored");
+}
+
+#[test]
 fn generic_oidc_admin_rejects_dangling_role_mappings() {
     let current: OAuth2Settings = serde_json::from_value(json!({
         "providers":[{"id":"company", "enabled":false}]
