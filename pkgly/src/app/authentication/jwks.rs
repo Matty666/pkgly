@@ -173,7 +173,18 @@ pub struct ReqwestJwksFetcher {
 
 impl ReqwestJwksFetcher {
     pub fn new() -> Result<Self, JwksError> {
-        let client = crate::utils::upstream::client_builder()
+        Self::with_client_builder(crate::utils::upstream::client_builder())
+    }
+
+    /// Fetch keys only from the configured URL.
+    pub(crate) fn new_without_redirects() -> Result<Self, JwksError> {
+        Self::with_client_builder(
+            crate::utils::upstream::client_builder().redirect(reqwest::redirect::Policy::none()),
+        )
+    }
+
+    fn with_client_builder(builder: reqwest::ClientBuilder) -> Result<Self, JwksError> {
+        let client = builder
             .timeout(Duration::from_secs(5))
             .build()
             .map_err(|err| JwksError::FetchFailed(err.to_string()))?;

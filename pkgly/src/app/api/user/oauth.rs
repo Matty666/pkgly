@@ -1,9 +1,9 @@
-// ABOUTME: Implements OAuth2 provider discovery, login, callback, and RBAC sync.
+// ABOUTME: Implements OAuth2 provider listing, login, callback, and RBAC sync.
 // ABOUTME: Exchanges provider identities for local sessions and redirect responses.
 use std::{io, net::SocketAddr, str::FromStr};
 
 use crate::app::authentication::jwks::{JwksManager, ReqwestJwksFetcher};
-use crate::app::config::{OAuth2GenericEndpoints, OidcProviderConfig, TokenSource};
+use crate::app::config::{OidcProviderConfig, TokenSource};
 use axum::{
     extract::{ConnectInfo, Extension, Path, Query, State},
     http::{
@@ -97,7 +97,6 @@ struct PersistedOAuthState {
     nonce: Option<String>,
     callback_uri: Option<String>,
     config_fingerprint: Option<String>,
-    discovered_endpoints: Option<OAuth2GenericEndpoints>,
 }
 
 impl PersistedOAuthState {
@@ -116,7 +115,6 @@ impl PersistedOAuthState {
             nonce: self.nonce,
             callback_uri: self.callback_uri,
             config_fingerprint: self.config_fingerprint,
-            discovered_endpoints: self.discovered_endpoints,
         })
     }
 }
@@ -162,7 +160,6 @@ pub async fn list_providers(State(site): State<Pkgly>) -> Result<Response, Inter
     responses(
         (status = 303, description = "Redirect to external provider"),
         (status = 404, description = "OAuth2 provider not configured"),
-        (status = 503, description = "OIDC discovery failed")
     ),
     tag = "user",
     security(())
@@ -188,10 +185,11 @@ pub async fn authorize(
 
     let base_url = resolve_base_url(&site);
 
-    let auth_redirect = match service
-        .begin_authorization(provider_kind, base_url.as_deref(), query.redirect.clone())
-        .await
-    {
+    let auth_redirect = match service.begin_authorization(
+        provider_kind,
+        base_url.as_deref(),
+        query.redirect.clone(),
+    ) {
         Ok(redirect) => redirect,
         Err(err) => {
             warn!(%err, "Failed to start OAuth2 authorization");
@@ -320,7 +318,11 @@ pub async fn callback(
     };
 
     // Create a JWKS manager for OIDC token verification
-    let fetcher = match ReqwestJwksFetcher::new() {
+    let fetcher = match if matches!(&exchange.provider, OAuth2ProviderKind::Custom(_)) {
+        ReqwestJwksFetcher::new_without_redirects()
+    } else {
+        ReqwestJwksFetcher::new()
+    } {
         Ok(fetcher) => fetcher,
         Err(err) => {
             error!(%err, "Failed to create JWKS fetcher");
@@ -598,15 +600,14 @@ async fn persist_oauth_state(
     sqlx::query(
         r#"
         INSERT INTO oauth2_states (state, provider, pkce_verifier, redirect, nonce, callback_uri,
-                                   config_fingerprint, discovered_endpoints)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                   config_fingerprint)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (state) DO UPDATE
         SET provider = EXCLUDED.provider,
             pkce_verifier = EXCLUDED.pkce_verifier,
             redirect = EXCLUDED.redirect,
             nonce = EXCLUDED.nonce, callback_uri = EXCLUDED.callback_uri,
             config_fingerprint = EXCLUDED.config_fingerprint,
-            discovered_endpoints = EXCLUDED.discovered_endpoints,
             created_at = NOW()
         "#,
     )
@@ -617,12 +618,6 @@ async fn persist_oauth_state(
     .bind(snapshot.nonce.as_deref())
     .bind(snapshot.callback_uri.as_deref())
     .bind(snapshot.config_fingerprint.as_deref())
-    .bind(
-        snapshot
-            .discovered_endpoints
-            .as_ref()
-            .map(sqlx::types::Json),
-    )
     .execute(&site.database)
     .await?;
     Ok(())
@@ -637,7 +632,7 @@ async fn load_persisted_oauth_state(
         DELETE FROM oauth2_states
         WHERE state = $1
         RETURNING provider, pkce_verifier, redirect, created_at, nonce, callback_uri,
-                  config_fingerprint, discovered_endpoints
+                  config_fingerprint
         "#,
     )
     .bind(state)
@@ -655,11 +650,6 @@ async fn load_persisted_oauth_state(
         nonce: record.get("nonce"),
         callback_uri: record.get("callback_uri"),
         config_fingerprint: record.get("config_fingerprint"),
-        discovered_endpoints: record
-            .try_get::<Option<sqlx::types::Json<OAuth2GenericEndpoints>>, _>(
-                "discovered_endpoints",
-            )?
-            .map(|endpoints| endpoints.0),
     }))
 }
 
@@ -706,13 +696,6 @@ fn oauth_service_error_response(err: OAuth2ServiceError) -> Response {
         | OAuth2ServiceError::ProviderNotConfigured(_) => {
             ResponseBuilder::not_found().body("OAuth2 provider not available")
         }
-        OAuth2ServiceError::DiscoveryFailed(_) => ResponseBuilder::default()
-            .status(StatusCode::SERVICE_UNAVAILABLE)
-            .body("This sign-in provider is temporarily unavailable. Return to the sign-in page and try again."),
-        OAuth2ServiceError::DiscoveryStateMissing => ResponseBuilder::default()
-            .status(StatusCode::SEE_OTHER)
-            .header(LOCATION, "/login?oauth_error=discovery_state_missing")
-            .empty(),
         OAuth2ServiceError::InvalidState => {
             ResponseBuilder::bad_request().body("OAuth2 login state is invalid or has expired")
         }

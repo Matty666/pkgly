@@ -39,34 +39,45 @@ pub(super) fn runtime(
 }
 
 pub(super) async fn discover(
-    config: &OAuth2GenericConfig,
+    issuer: &str,
+    auth_method: &str,
     client: &HttpClient,
 ) -> Result<OAuth2GenericEndpoints, String> {
     let url = format!(
         "{}/.well-known/openid-configuration",
-        config.issuer.trim_end_matches('/')
+        issuer.trim_end_matches('/')
     );
-    let response = crate::utils::upstream::send(client, client.get(url))
+    let mut response = crate::utils::upstream::send(client, client.get(url))
         .await
         .map_err(|_| "OIDC discovery request failed")?;
     if !response.status().is_success() {
         return Err("OIDC discovery returned an error status".into());
     }
-    let metadata = response
-        .json::<Value>()
+    const MAX_METADATA_BYTES: usize = 256 * 1024;
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|_| "Invalid OIDC discovery metadata")?;
-    resolve_metadata(config, metadata)
+        .map_err(|_| "OIDC discovery request failed")?
+    {
+        if chunk.len() > MAX_METADATA_BYTES - body.len() {
+            return Err("OIDC discovery metadata exceeds the size limit".into());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let metadata = serde_json::from_slice(&body).map_err(|_| "Invalid OIDC discovery metadata")?;
+    resolve_metadata(issuer, auth_method, metadata)
 }
 
 pub(super) fn resolve_metadata(
-    config: &OAuth2GenericConfig,
+    issuer: &str,
+    auth_method: &str,
     metadata: Value,
 ) -> Result<OAuth2GenericEndpoints, String> {
-    if metadata.get("issuer").and_then(Value::as_str) != Some(config.issuer.as_str()) {
+    if metadata.get("issuer").and_then(Value::as_str) != Some(issuer) {
         return Err("OIDC discovery issuer mismatch".into());
     }
-    validate_metadata_support(config, &metadata)?;
+    validate_metadata_support(auth_method, &metadata)?;
     let endpoint = |field: &str| -> Result<String, String> {
         let value = metadata[field]
             .as_str()
@@ -81,7 +92,7 @@ pub(super) fn resolve_metadata(
     })
 }
 
-fn validate_metadata_support(config: &OAuth2GenericConfig, metadata: &Value) -> Result<(), String> {
+fn validate_metadata_support(auth_method: &str, metadata: &Value) -> Result<(), String> {
     for (field, required) in [
         ("response_types_supported", "code"),
         ("id_token_signing_alg_values_supported", "RS256"),
@@ -109,11 +120,10 @@ fn validate_metadata_support(config: &OAuth2GenericConfig, metadata: &Value) -> 
         .get("token_endpoint_auth_methods_supported")
         .cloned()
         .unwrap_or_else(|| json!(["client_secret_basic"]));
-    if !methods.as_array().is_some_and(|items| {
-        items
-            .iter()
-            .any(|v| v.as_str() == Some(config.token_endpoint_auth_method.as_str()))
-    }) {
+    if !methods
+        .as_array()
+        .is_some_and(|items| items.iter().any(|v| v.as_str() == Some(auth_method)))
+    {
         return Err("OIDC discovery client authentication mismatch".into());
     }
     Ok(())

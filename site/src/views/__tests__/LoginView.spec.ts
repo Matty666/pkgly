@@ -124,15 +124,6 @@ describe("LoginView", () => {
     expect(wrapper.get("#login-username").exists()).toBe(true);
   });
 
-  it("shows how to retry an interrupted OIDC sign-in", async () => {
-    mockQuery.oauth_error = "discovery_state_missing";
-    const wrapper = await mountLogin();
-
-    expect(wrapper.get('[data-testid="login-inline-alert"]').text()).toContain(
-      "Your sign-in attempt expired. Please try again.",
-    );
-  });
-
   it("shows the inline login error without triggering a global alert on 401", async () => {
     httpPost.mockRejectedValueOnce({
       response: {

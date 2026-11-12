@@ -25,14 +25,6 @@
           </v-card-title>
 
           <v-card-text class="pa-6 pt-0">
-            <v-alert
-              v-if="route.query.oauth_error === 'discovery_state_missing'"
-              type="warning"
-              variant="tonal"
-              class="mb-4">
-              Your sign-in attempt expired. Please try again.
-            </v-alert>
-
             <!-- Primary Federated Login (SSO or first OAuth) -->
             <div
               v-if="primaryFederated"
