@@ -97,7 +97,7 @@ impl From<&OAuth2Settings> for InstanceOAuth2Settings {
         }
         providers.extend(
             settings
-                .providers
+                .generic_providers
                 .iter()
                 .filter(|cfg| cfg.enabled)
                 .map(|cfg| InstanceOAuth2Provider {

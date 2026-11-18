@@ -89,7 +89,7 @@ interface EditableOAuthConfiguration {
   auto_create_users: boolean;
   google: EditableOAuthProvider;
   microsoft: EditableOAuthProvider;
-  providers: EditableGenericProvider[];
+  generic_providers: EditableGenericProvider[];
   casbin_model: string;
   casbin_policy: string;
   group_role_mappings: EditableGroupRoleMapping[];
@@ -111,7 +111,7 @@ interface OAuth2UpdatePayload {
   auto_create_users: boolean;
   google: OAuth2ProviderUpdatePayload | null;
   microsoft: OAuth2ProviderUpdatePayload | null;
-  providers: (OAuth2ProviderUpdatePayload & {
+  generic_providers: (OAuth2ProviderUpdatePayload & {
     id: string;
     display_name: string;
     enabled: boolean;
@@ -142,7 +142,7 @@ const roleOptionsId = "pkgly-role-options";
 const mappingProviderOptions = computed(() => [
   { title: "Google", value: "google" },
   { title: "Microsoft", value: "microsoft" },
-  ...oauthForm.value.providers.map((provider) => ({
+  ...oauthForm.value.generic_providers.map((provider) => ({
     title: provider.display_name || provider.id,
     value: provider.id,
   })),
@@ -232,7 +232,7 @@ async function fetchOAuthSettings() {
   try {
     const response = await http.get<OAuth2Configuration>("/api/security/oauth2");
     oauthForm.value = toOAuthEditable(response.data);
-    savedGenericProviders.value = response.data.providers ?? [];
+    savedGenericProviders.value = response.data.generic_providers ?? [];
     oauthInitialSignature.value = JSON.stringify(oauthForm.value);
     availableRoles.value = response.data.available_roles ?? [];
   } catch (error) {
@@ -320,7 +320,7 @@ async function discoverGenericEndpoints(provider: EditableGenericProvider) {
       token_endpoint_auth_method: authMethod,
     });
     if (
-      oauthForm.value.providers.includes(provider) &&
+      oauthForm.value.generic_providers.includes(provider) &&
       provider.issuer.trim() === issuer &&
       provider.token_endpoint_auth_method === authMethod
     ) {
@@ -387,7 +387,7 @@ async function saveOAuthSettings() {
   }
 
   if (
-    oauthForm.value.providers.some(
+    oauthForm.value.generic_providers.some(
       (provider) =>
         provider.enabled &&
         [provider.authorization_url, provider.token_url, provider.jwks_url].some(
@@ -400,7 +400,7 @@ async function saveOAuthSettings() {
   }
 
   if (
-    oauthForm.value.providers.some(
+    oauthForm.value.generic_providers.some(
       (provider) => mustReenterGenericSecret(provider) && !provider.client_secret.trim(),
     )
   ) {
@@ -502,7 +502,7 @@ function defaultOAuthForm(): EditableOAuthConfiguration {
     auto_create_users: false,
     google: defaultProvider(),
     microsoft: defaultProvider(),
-    providers: [],
+    generic_providers: [],
     casbin_model: "",
     casbin_policy: "",
     group_role_mappings: [],
@@ -625,7 +625,7 @@ function toOAuthEditable(settings: OAuth2Configuration): EditableOAuthConfigurat
     form.microsoft.tenant_id = settings.microsoft.tenant_id ?? "";
   }
 
-  form.providers = (settings.providers ?? []).map((provider) => ({
+  form.generic_providers = (settings.generic_providers ?? []).map((provider) => ({
     ...defaultGenericProvider(),
     ...provider,
     rowId: generateId(),
@@ -720,7 +720,7 @@ function toOAuthPayload(settings: EditableOAuthConfiguration): OAuth2UpdatePaylo
     auto_create_users: settings.auto_create_users,
     google,
     microsoft,
-    providers: settings.providers.map((provider) => ({
+    generic_providers: settings.generic_providers.map((provider) => ({
       id: provider.id.trim(),
       display_name: provider.display_name.trim(),
       enabled: provider.enabled,
@@ -768,16 +768,16 @@ function defaultGenericProvider(): EditableGenericProvider {
 }
 
 function addGenericProvider() {
-  oauthForm.value.providers.push(defaultGenericProvider());
+  oauthForm.value.generic_providers.push(defaultGenericProvider());
 }
 function removeGenericProvider(rowId: string) {
-  const removed = oauthForm.value.providers.find((provider) => provider.rowId === rowId);
+  const removed = oauthForm.value.generic_providers.find((provider) => provider.rowId === rowId);
   if (removed) {
     oauthForm.value.group_role_mappings = oauthForm.value.group_role_mappings.filter(
       (mapping) => mapping.provider !== removed.id,
     );
   }
-  oauthForm.value.providers = oauthForm.value.providers.filter(
+  oauthForm.value.generic_providers = oauthForm.value.generic_providers.filter(
     (provider) => provider.rowId !== rowId,
   );
 }
@@ -1268,7 +1268,7 @@ function removeOidcProvider(id: string) {
             </v-btn>
           </header>
           <div
-            v-for="provider in oauthForm.providers"
+            v-for="provider in oauthForm.generic_providers"
             :key="provider.rowId"
             class="oidcProvider">
             <SwitchInput

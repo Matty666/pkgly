@@ -107,7 +107,7 @@ struct OAuth2SettingsResponse {
     google: Option<OAuth2ProviderSettingsResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     microsoft: Option<OAuth2ProviderSettingsResponse>,
-    providers: Vec<GenericProviderResponse>,
+    generic_providers: Vec<GenericProviderResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     casbin: Option<OAuth2CasbinConfig>,
     #[serde(default)]
@@ -153,7 +153,7 @@ pub struct OAuth2SettingsRequest {
     #[serde(default)]
     microsoft: Option<OAuth2MicrosoftSettingsRequest>,
     #[serde(default)]
-    providers: Option<Vec<GenericProviderRequest>>,
+    generic_providers: Option<Vec<GenericProviderRequest>>,
     #[serde(default)]
     casbin: Option<OAuth2CasbinConfig>,
     #[serde(default)]
@@ -239,6 +239,22 @@ fn sanitize_casbin_config(mut cfg: OAuth2CasbinConfig) -> OAuth2CasbinConfig {
     cfg
 }
 
+fn build_generic_provider_response(cfg: &OAuth2GenericConfig) -> GenericProviderResponse {
+    GenericProviderResponse {
+        id: cfg.id.clone(),
+        display_name: cfg.display_name.clone(),
+        enabled: cfg.enabled,
+        issuer: cfg.issuer.clone(),
+        client_id: cfg.client_id.clone(),
+        scopes: cfg.scopes.clone(),
+        redirect_path: cfg.redirect_path.clone(),
+        endpoints: cfg.endpoints.clone(),
+        token_endpoint_auth_method: cfg.token_endpoint_auth_method.clone(),
+        id_token_signing_alg: cfg.id_token_signing_alg.clone(),
+        client_secret_configured: !cfg.client_secret.is_empty(),
+    }
+}
+
 fn build_oauth2_response(settings: &OAuth2Settings) -> OAuth2SettingsResponse {
     let google = settings
         .google
@@ -261,6 +277,12 @@ fn build_oauth2_response(settings: &OAuth2Settings) -> OAuth2SettingsResponse {
             client_secret_configured: !cfg.client_secret.is_empty(),
         });
 
+    let generic_providers = settings
+        .generic_providers
+        .iter()
+        .map(build_generic_provider_response)
+        .collect();
+
     OAuth2SettingsResponse {
         enabled: settings.enabled,
         login_path: settings.login_path.clone(),
@@ -269,23 +291,7 @@ fn build_oauth2_response(settings: &OAuth2Settings) -> OAuth2SettingsResponse {
         auto_create_users: settings.auto_create_users,
         google,
         microsoft,
-        providers: settings
-            .providers
-            .iter()
-            .map(|cfg| GenericProviderResponse {
-                id: cfg.id.clone(),
-                display_name: cfg.display_name.clone(),
-                enabled: cfg.enabled,
-                issuer: cfg.issuer.clone(),
-                client_id: cfg.client_id.clone(),
-                scopes: cfg.scopes.clone(),
-                redirect_path: cfg.redirect_path.clone(),
-                endpoints: cfg.endpoints.clone(),
-                token_endpoint_auth_method: cfg.token_endpoint_auth_method.clone(),
-                id_token_signing_alg: cfg.id_token_signing_alg.clone(),
-                client_secret_configured: !cfg.client_secret.is_empty(),
-            })
-            .collect(),
+        generic_providers,
         casbin: settings.casbin.clone(),
         group_role_mappings: settings.group_role_mappings.clone(),
         available_roles: settings
@@ -357,7 +363,7 @@ fn merge_oauth2_settings(
         auto_create_users: request.auto_create_users,
         google,
         microsoft,
-        providers: merge_generic_settings(current, request.providers)?,
+        generic_providers: merge_generic_settings(current, request.generic_providers)?,
         casbin,
         group_role_mappings,
     };
@@ -744,14 +750,16 @@ fn merge_generic_settings(
     request: Option<Vec<GenericProviderRequest>>,
 ) -> Result<Vec<OAuth2GenericConfig>, String> {
     let Some(request) = request else {
-        return Ok(current.map(|cfg| cfg.providers.clone()).unwrap_or_default());
+        return Ok(current
+            .map(|cfg| cfg.generic_providers.clone())
+            .unwrap_or_default());
     };
     request
         .into_iter()
         .map(|req| {
             let mut config = req.config;
             let saved = current
-                .and_then(|cfg| cfg.providers.iter().find(|old| old.id == config.id))
+                .and_then(|cfg| cfg.generic_providers.iter().find(|old| old.id == config.id))
                 .filter(|old| !old.client_secret.is_empty());
             config.client_secret = match (req.client_secret, saved) {
                 (Some(secret), _) if secret.trim().is_empty() => {

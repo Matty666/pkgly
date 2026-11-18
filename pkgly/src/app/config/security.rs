@@ -165,7 +165,8 @@ pub struct OAuth2Settings {
     /// Microsoft Entra ID (Azure AD) OAuth2/OpenID Connect configuration.
     pub microsoft: Option<OAuth2MicrosoftConfig>,
     /// Configurable OIDC providers, independent of provider vendors.
-    pub providers: Vec<OAuth2GenericConfig>,
+    #[serde(alias = "providers")]
+    pub generic_providers: Vec<OAuth2GenericConfig>,
     /// Optional Casbin configuration for RBAC policy enforcement.
     pub casbin: Option<OAuth2CasbinConfig>,
     /// Optional mapping between provider groups/roles and Pkgly Casbin roles.
@@ -182,7 +183,7 @@ impl Default for OAuth2Settings {
             auto_create_users: false,
             google: None,
             microsoft: None,
-            providers: Vec::new(),
+            generic_providers: Vec::new(),
             casbin: Some(OAuth2CasbinConfig::default()),
             group_role_mappings: Vec::new(),
         }
@@ -515,7 +516,7 @@ impl OAuth2Settings {
     /// Returns an error for collisions or invalid provider contracts.
     pub fn validate_providers(&self) -> Result<(), String> {
         let mut ids = std::collections::HashSet::new();
-        for provider in &self.providers {
+        for provider in &self.generic_providers {
             provider.validate()?;
             if !ids.insert(&provider.id) {
                 return Err("Duplicate OIDC provider ID".into());

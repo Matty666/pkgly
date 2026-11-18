@@ -214,7 +214,7 @@ fn merge_oauth2_settings_sanitizes_paths_and_mappings() {
             redirect_path: None,
         }),
         microsoft: None,
-        providers: Default::default(),
+        generic_providers: Default::default(),
         casbin: None,
         group_role_mappings: vec![],
     };
@@ -232,7 +232,7 @@ fn merge_oauth2_settings_sanitizes_paths_and_mappings() {
             redirect_path: Some("callback".into()),
         }),
         microsoft: None,
-        providers: Default::default(),
+        generic_providers: Default::default(),
         casbin: None,
         group_role_mappings: vec![
             OAuth2GroupRoleMapping {
@@ -693,50 +693,58 @@ fn password_rules_accepts_any_when_no_constraints() {
 
 #[test]
 fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
-    let current: OAuth2Settings = serde_json::from_value(json!({"providers":[{
+    let current: OAuth2Settings = serde_json::from_value(json!({"generic_providers":[{
         "id":"company", "display_name":"Company", "issuer":"https://id.example", "client_id":"pkgly", "client_secret":"secret",
         "endpoints":{"authorization_url":"https://id.example/auth","token_url":"https://id.example/token","jwks_url":"https://keys.example/jwks"}
     }]})).unwrap();
     let base = json!({"enabled":false,"login_path":"/api/user/oauth2/login","callback_path":"/api/user/oauth2/callback","auto_create_users":false});
     let omitted: OAuth2SettingsRequest = serde_json::from_value(base.clone()).unwrap();
     let retained = merge_oauth2_settings(Some(&current), omitted).unwrap();
-    assert_eq!(retained.providers[0].client_secret, "secret");
+    assert_eq!(retained.generic_providers[0].client_secret, "secret");
     let response = serde_json::to_value(build_oauth2_response(&retained)).unwrap();
-    assert_eq!(response["providers"][0]["client_secret_configured"], true);
-    assert!(response["providers"][0].get("client_secret").is_none());
+    assert_eq!(
+        response["generic_providers"][0]["client_secret_configured"],
+        true
+    );
+    assert!(response.get("providers").is_none());
+    assert!(
+        response["generic_providers"][0]
+            .get("client_secret")
+            .is_none()
+    );
     let mut update = base.clone();
-    let mut provider = serde_json::to_value(&current.providers[0]).unwrap();
+    let mut provider = serde_json::to_value(&current.generic_providers[0]).unwrap();
     provider.as_object_mut().unwrap().remove("client_secret");
-    update["providers"] = json!([provider.clone()]);
+    update["generic_providers"] = json!([provider.clone()]);
     let merged = merge_oauth2_settings(
         Some(&current),
         serde_json::from_value(update.clone()).unwrap(),
     )
     .unwrap();
-    assert_eq!(merged.providers[0].client_secret, "secret");
-    update["providers"][0]["client_secret"] = serde_json::Value::Null;
+    assert_eq!(merged.generic_providers[0].client_secret, "secret");
+    update["generic_providers"][0]["client_secret"] = serde_json::Value::Null;
     assert_eq!(
         merge_oauth2_settings(
             Some(&current),
             serde_json::from_value(update.clone()).unwrap()
         )
         .unwrap()
-        .providers[0]
+        .generic_providers[0]
             .client_secret,
         "secret"
     );
-    update["providers"][0]["client_secret"] = json!("replacement");
+    update["generic_providers"][0]["client_secret"] = json!("replacement");
     assert_eq!(
         merge_oauth2_settings(
             Some(&current),
             serde_json::from_value(update.clone()).unwrap()
         )
         .unwrap()
-        .providers[0]
+        .generic_providers[0]
             .client_secret,
         "replacement"
     );
-    update["providers"][0]["client_secret"] = json!("");
+    update["generic_providers"][0]["client_secret"] = json!("");
     assert!(
         merge_oauth2_settings(
             Some(&current),
@@ -744,8 +752,8 @@ fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
         )
         .is_err()
     );
-    update["providers"][0]["client_secret"] = serde_json::Value::Null;
-    update["providers"][0]["id"] = "new-id".into();
+    update["generic_providers"][0]["client_secret"] = serde_json::Value::Null;
+    update["generic_providers"][0]["id"] = "new-id".into();
     assert!(
         merge_oauth2_settings(
             Some(&current),
@@ -753,11 +761,11 @@ fn generic_oidc_admin_preserves_masks_and_removes_secrets() {
         )
         .is_err()
     );
-    update["providers"] = json!([]);
+    update["generic_providers"] = json!([]);
     assert!(
         merge_oauth2_settings(Some(&current), serde_json::from_value(update).unwrap())
             .unwrap()
-            .providers
+            .generic_providers
             .is_empty()
     );
 }
@@ -774,7 +782,7 @@ fn generic_oidc_requires_explicit_secret_for_credential_binding_changes() {
         }
     });
     let current: OAuth2Settings = serde_json::from_value(json!({
-        "providers": [provider.clone()]
+        "generic_providers": [provider.clone()]
     }))
     .unwrap();
     for (field, value) in [
@@ -814,10 +822,10 @@ fn generic_oidc_requires_explicit_secret_for_credential_binding_changes() {
 #[test]
 fn generic_oidc_admin_rejects_dangling_role_mappings() {
     let current: OAuth2Settings = serde_json::from_value(json!({
-        "providers":[{"id":"company", "enabled":false}]
+        "generic_providers":[{"id":"company", "enabled":false}]
     }))
     .unwrap();
-    let mut payload = json!({"enabled":false, "providers":[], "login_path":"/api/user/oauth2/login", "callback_path":"/api/user/oauth2/callback", "auto_create_users":false, "group_role_mappings":[
+    let mut payload = json!({"enabled":false, "generic_providers":[], "login_path":"/api/user/oauth2/login", "callback_path":"/api/user/oauth2/callback", "auto_create_users":false, "group_role_mappings":[
         {"provider":"company", "group":"staff", "roles":["read"]}
     ]});
     assert!(
@@ -889,4 +897,33 @@ async fn oidc_discovery_prefill_requires_an_admin_session_and_does_not_save() {
     );
     assert!(site.oauth2_settings_raw().is_none());
     server.abort();
+}
+
+#[test]
+fn generic_provider_response_preserves_configuration_and_masks_secret() {
+    for secret in ["", "private-client-secret"] {
+        let provider = OAuth2GenericConfig {
+            id: "partner".into(),
+            display_name: "Partner login".into(),
+            enabled: false,
+            issuer: "https://id.example/tenant".into(),
+            client_id: "pkgly".into(),
+            client_secret: secret.into(),
+            scopes: vec!["openid".into(), "groups".into()],
+            redirect_path: Some("/api/user/oauth2/callback".into()),
+            endpoints: Some(OAuth2GenericEndpoints {
+                authorization_url: "https://id.example/authorize".into(),
+                token_url: "https://id.example/token".into(),
+                jwks_url: "https://id.example/keys".into(),
+            }),
+            token_endpoint_auth_method: "client_secret_post".into(),
+            ..Default::default()
+        };
+        let response = serde_json::to_value(build_generic_provider_response(&provider)).unwrap();
+        let mut expected = serde_json::to_value(&provider).unwrap();
+        expected.as_object_mut().unwrap().remove("client_secret");
+        expected["client_secret_configured"] = json!(!secret.is_empty());
+        assert_eq!(response, expected);
+        assert!(response.get("client_secret").is_none());
+    }
 }

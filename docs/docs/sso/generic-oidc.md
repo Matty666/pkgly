@@ -28,7 +28,7 @@ enabled = true
 redirect_base_url = "https://packages.example.com"
 auto_create_users = false
 
-[[security.oauth2.providers]]
+[[security.oauth2.generic_providers]]
 id = "company-sso"
 display_name = "Company sign-in"
 enabled = true
@@ -39,11 +39,16 @@ scopes = ["openid", "profile", "email"]
 token_endpoint_auth_method = "client_secret_basic"
 id_token_signing_alg = "RS256"
 
-[security.oauth2.providers.endpoints]
+[security.oauth2.generic_providers.endpoints]
 authorization_url = "https://identity.example.com/authorize"
 token_url = "https://identity.example.com/token"
 jwks_url = "https://identity.example.com/keys"
 ```
+
+The OAuth2 settings API at `/api/security/oauth2` uses `generic_providers` in its request and response.
+Google and Microsoft use the separate `google` and `microsoft` fields.
+The configuration file uses the `security.oauth2.generic_providers` table shown above.
+Pkgly also reads the earlier `providers` name from saved preview settings. New settings use `generic_providers`.
 
 Database settings saved through the admin API take priority over file settings at startup.
 Keep secrets outside source control. Admin responses return `client_secret_configured`, without the secret.
