@@ -617,6 +617,11 @@ impl Pkgly {
             }
         }
 
+        if let Some(settings) = &settings {
+            ApplicationSettings::upsert("security.oauth2", settings, &self.database).await?;
+        } else {
+            ApplicationSettings::delete("security.oauth2", &self.database).await?;
+        }
         {
             let mut security = self.inner.general_security_settings.write();
             security.oauth2 = settings.clone();
@@ -635,12 +640,6 @@ impl Pkgly {
         {
             let mut rbac_lock = self.inner.oauth2_rbac.write();
             *rbac_lock = new_rbac;
-        }
-
-        if let Some(settings) = settings {
-            ApplicationSettings::upsert("security.oauth2", &settings, &self.database).await?;
-        } else {
-            ApplicationSettings::delete("security.oauth2", &self.database).await?;
         }
 
         Ok(())
