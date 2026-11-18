@@ -117,7 +117,11 @@ impl OAuth2Service {
             }
         }
 
-        for config in settings.providers.iter().filter(|config| config.enabled) {
+        for config in settings
+            .generic_providers
+            .iter()
+            .filter(|config| config.enabled)
+        {
             let endpoints = config.endpoints.clone().ok_or_else(|| {
                 OAuth2ServiceError::ClientConstruction("OIDC endpoints are required".into())
             })?;
@@ -126,7 +130,7 @@ impl OAuth2Service {
             providers.insert(runtime.provider.clone(), runtime);
         }
 
-        if providers.is_empty() && settings.providers.is_empty() {
+        if providers.is_empty() && settings.generic_providers.is_empty() {
             warn!("OAuth2 is enabled but no valid providers were configured");
             return Err(OAuth2ServiceError::MissingProviders);
         }
@@ -153,7 +157,7 @@ impl OAuth2Service {
             });
         let custom = self
             .settings
-            .providers
+            .generic_providers
             .iter()
             .filter(|cfg| cfg.enabled)
             .map(|cfg| {
@@ -224,7 +228,7 @@ impl OAuth2Service {
     pub fn providers(&self) -> impl Iterator<Item = OAuth2ProviderKind> + '_ {
         self.providers.keys().cloned().chain(
             self.settings
-                .providers
+                .generic_providers
                 .iter()
                 .filter(|cfg| cfg.enabled)
                 .map(|cfg| OAuth2ProviderKind::Custom(cfg.id.clone())),
@@ -240,7 +244,7 @@ impl OAuth2Service {
             return None;
         };
         self.settings
-            .providers
+            .generic_providers
             .iter()
             .find(|cfg| cfg.enabled && cfg.id == *id)
     }

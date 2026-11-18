@@ -70,7 +70,7 @@ async fn generic_oidc_authorization_uses_configuration_and_persists_nonce() {
     for id in ["company-sso", "partner-login"] {
         let settings: OAuth2Settings = serde_json::from_value(serde_json::json!({
             "enabled":true, "redirect_base_url":"https://pkgly.example",
-            "providers":[{"id":id,"display_name":"Custom login","issuer":"https://id.example/team",
+            "generic_providers":[{"id":id,"display_name":"Custom login","issuer":"https://id.example/team",
                 "client_id":"client", "client_secret":"secret",
                 "endpoints":{"authorization_url":"https://id.example/unusual/authorize",
                     "token_url":"https://id.example/unusual/token","jwks_url":"https://id.example/keys"}}]
@@ -101,7 +101,7 @@ async fn generic_oidc_authorization_uses_configuration_and_persists_nonce() {
 #[tokio::test]
 async fn generic_oidc_disabled_provider_is_not_advertised() {
     let mut settings = google_settings();
-    settings.providers =
+    settings.generic_providers =
         serde_json::from_value(serde_json::json!([{"id":"unused", "enabled":false}])).unwrap();
     let service = OAuth2Service::new(settings).unwrap().unwrap();
     assert_eq!(service.provider_descriptors().len(), 1);
@@ -115,7 +115,7 @@ async fn generic_oidc_disabled_provider_is_not_advertised() {
 #[tokio::test]
 async fn generic_oidc_rejects_missing_nonce_and_removed_provider_before_exchange() {
     let settings: OAuth2Settings=serde_json::from_value(serde_json::json!({"enabled":true,"redirect_base_url":"https://pkgly.example",
-        "providers":[{"id":"company","display_name":"Company","issuer":"https://id.example","client_id":"pkgly","client_secret":"secret",
+        "generic_providers":[{"id":"company","display_name":"Company","issuer":"https://id.example","client_id":"pkgly","client_secret":"secret",
             "endpoints":{"authorization_url":"https://id.example/auth","token_url":"https://id.example/token","jwks_url":"https://id.example/keys"}}]})).unwrap();
     let service = OAuth2Service::new(settings).unwrap().unwrap();
     let auth = service
@@ -161,7 +161,7 @@ async fn generic_oidc_rejects_missing_nonce_and_removed_provider_before_exchange
 #[tokio::test]
 async fn generic_oidc_can_disable_the_last_custom_provider() {
     let settings: OAuth2Settings = serde_json::from_value(serde_json::json!({
-        "enabled": true, "providers": [{"id":"company", "enabled":false}]
+        "enabled": true, "generic_providers": [{"id":"company", "enabled":false}]
     }))
     .unwrap();
     let service = OAuth2Service::new(settings).unwrap().unwrap();
@@ -176,7 +176,7 @@ async fn generic_oidc_can_disable_the_last_custom_provider() {
 #[test]
 fn generic_oidc_login_rejects_provider_with_missing_endpoints() {
     let mut settings = google_settings();
-    settings.providers = serde_json::from_value(serde_json::json!([{
+    settings.generic_providers = serde_json::from_value(serde_json::json!([{
         "id": "company", "display_name": "Company", "issuer": "https://issuer.example",
         "client_id": "client", "client_secret": "secret"
     }]))

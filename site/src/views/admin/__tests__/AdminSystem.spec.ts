@@ -220,7 +220,7 @@ describe("AdminSystem.vue", () => {
     expect(httpPut).toHaveBeenCalledWith(
       "/api/security/oauth2",
       expect.objectContaining({
-        providers: [
+        generic_providers: [
           expect.objectContaining({
             id: "company-sso",
             display_name: "Company sign-in",
@@ -245,7 +245,7 @@ describe("AdminSystem.vue", () => {
       const response = await originalGet(url);
       if (url === "/api/security/oauth2") {
         response.data.enabled = true;
-        response.data.providers = [
+        response.data.generic_providers = [
           {
             id: "company",
             display_name: "Company",
@@ -284,7 +284,9 @@ describe("AdminSystem.vue", () => {
     expect(httpPut).toHaveBeenCalledWith(
       "/api/security/oauth2",
       expect.objectContaining({
-        providers: [expect.objectContaining({ id: "company", client_secret: "explicit-secret" })],
+        generic_providers: [
+          expect.objectContaining({ id: "company", client_secret: "explicit-secret" }),
+        ],
       }),
     );
   });
@@ -383,7 +385,7 @@ describe("AdminSystem.vue", () => {
     httpGet.mockImplementation(async (url: string) => {
       const response = await originalGet(url);
       if (url === "/api/security/oauth2") {
-        response.data.providers = [
+        response.data.generic_providers = [
           {
             id: "partner-login",
             display_name: "Partner account",
@@ -425,7 +427,7 @@ describe("AdminSystem.vue", () => {
     expect(httpPut).toHaveBeenLastCalledWith(
       "/api/security/oauth2",
       expect.objectContaining({
-        providers: [
+        generic_providers: [
           expect.objectContaining({
             id: "partner-login",
             display_name: "Updated label",
@@ -443,7 +445,7 @@ describe("AdminSystem.vue", () => {
     await flushPromises();
     expect(httpPut).toHaveBeenLastCalledWith(
       "/api/security/oauth2",
-      expect.objectContaining({ providers: [], group_role_mappings: [] }),
+      expect.objectContaining({ generic_providers: [], group_role_mappings: [] }),
     );
   });
 

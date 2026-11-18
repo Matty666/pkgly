@@ -149,7 +149,7 @@ export interface OAuth2Configuration {
   auto_create_users: boolean;
   google?: OAuth2ProviderSummary | null;
   microsoft?: OAuth2ProviderSummary | null;
-  providers?: OAuth2GenericProvider[];
+  generic_providers?: OAuth2GenericProvider[];
   casbin?: OAuth2CasbinConfig | null;
   group_role_mappings: OAuth2GroupRoleMapping[];
   available_roles: string[];

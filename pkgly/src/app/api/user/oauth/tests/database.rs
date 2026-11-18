@@ -191,10 +191,10 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         axum::serve(listener, app).await.unwrap();
     });
     let mut settings: OAuth2Settings=serde_json::from_value(json!({"enabled":true,"redirect_base_url":"https://pkgly.example","casbin":null,
-        "providers":[{"id":"company","display_name":"Company sign-in","issuer":issuer,"client_id":"pkgly","client_secret":"secret",
+        "generic_providers":[{"id":"company","display_name":"Company sign-in","issuer":issuer,"client_id":"pkgly","client_secret":"secret",
             "endpoints":{"authorization_url":format!("{issuer}/arbitrary/authorize"),
                 "token_url":format!("{issuer}/arbitrary/token"),"jwks_url":format!("{issuer}/arbitrary/keys")}}]})).unwrap();
-    let mut partner = settings.providers[0].clone();
+    let mut partner = settings.generic_providers[0].clone();
     partner.id = "partner-login".into();
     partner.display_name = "Partner account".into();
     partner.issuer = format!("{issuer}/partner");
@@ -203,7 +203,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         token_url: format!("{issuer}/partner/exchange"),
         jwks_url: format!("{issuer}/partner/signing-keys"),
     });
-    settings.providers.push(partner);
+    settings.generic_providers.push(partner);
     site.update_oauth2_settings(Some(settings.clone()))
         .await
         .unwrap();
@@ -220,9 +220,11 @@ async fn generic_oidc_database_login_state_and_account_policy() {
     ] {
         *keys.lock() = initial_keys.clone();
         let mut case_settings = settings.clone();
-        case_settings.providers[provider_index].token_endpoint_auth_method = method.into();
-        let provider_id = case_settings.providers[provider_index].id.clone();
-        let provider_issuer = case_settings.providers[provider_index].issuer.clone();
+        case_settings.generic_providers[provider_index].token_endpoint_auth_method = method.into();
+        let provider_id = case_settings.generic_providers[provider_index].id.clone();
+        let provider_issuer = case_settings.generic_providers[provider_index]
+            .issuer
+            .clone();
         site.update_oauth2_settings(Some(case_settings.clone()))
             .await
             .unwrap();
@@ -380,7 +382,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
 
     // Settings validation and persistence failure must leave the prior runtime usable.
     let mut changed = settings.clone();
-    changed.providers[0].client_secret = "replacement".into();
+    changed.generic_providers[0].client_secret = "replacement".into();
     let replacement = crate::app::authentication::oauth::OAuth2Service::new(changed.clone())
         .unwrap()
         .unwrap();
@@ -396,7 +398,7 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         .unwrap();
     assert!(site.update_oauth2_settings(Some(changed)).await.is_err());
     assert_eq!(
-        site.oauth2_settings_raw().unwrap().providers[0].client_secret,
+        site.oauth2_settings_raw().unwrap().generic_providers[0].client_secret,
         "secret"
     );
     assert_eq!(
@@ -408,10 +410,10 @@ async fn generic_oidc_database_login_state_and_account_policy() {
         .await
         .unwrap();
     let mut invalid = settings.clone();
-    invalid.providers[0].issuer = "not a URL".into();
+    invalid.generic_providers[0].issuer = "not a URL".into();
     assert!(site.update_oauth2_settings(Some(invalid)).await.is_err());
     assert_eq!(
-        site.oauth2_settings_raw().unwrap().providers[0].issuer,
+        site.oauth2_settings_raw().unwrap().generic_providers[0].issuer,
         issuer
     );
     server.abort();
