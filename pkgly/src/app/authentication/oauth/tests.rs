@@ -186,3 +186,25 @@ fn generic_oidc_login_rejects_provider_with_missing_endpoints() {
         Err(OAuth2ServiceError::ClientConstruction(_))
     ));
 }
+
+#[tokio::test]
+async fn builtin_token_verification_rejects_malformed_tokens_and_custom_providers() {
+    let service = OAuth2Service::new(google_settings()).unwrap().unwrap();
+    let jwks = JwksManager::new(ReqwestJwksFetcher::new().unwrap(), Duration::from_secs(60));
+    for provider in [OAuth2ProviderKind::Google, OAuth2ProviderKind::Microsoft] {
+        let error = service
+            .verify_builtin_token(&provider, "invalid-token", &jwks)
+            .await
+            .unwrap_err();
+        assert_eq!(error, "Invalid builtin identity token");
+    }
+    let error = service
+        .verify_builtin_token(
+            &OAuth2ProviderKind::Custom("company".into()),
+            "invalid-token",
+            &jwks,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, "Unexpected generic provider");
+}

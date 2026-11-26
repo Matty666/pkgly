@@ -3,7 +3,6 @@
 use std::{io, net::SocketAddr, str::FromStr};
 
 use crate::app::authentication::jwks::{JwksManager, ReqwestJwksFetcher};
-use crate::app::config::{OidcProviderConfig, TokenSource};
 use axum::{
     extract::{ConnectInfo, Extension, Path, Query, State},
     http::{
@@ -347,7 +346,9 @@ pub async fn callback(
             None => Err("Missing saved OIDC nonce".into()),
         },
         _ => {
-            verify_builtin_token(&exchange.provider, &oauth_settings, id_token, &jwks_manager).await
+            service
+                .verify_builtin_token(&exchange.provider, id_token, &jwks_manager)
+                .await
         }
     };
     let claims_map = match verified {
@@ -778,57 +779,3 @@ fn map_roles_from_claims(
 
 #[cfg(test)]
 mod tests;
-
-async fn verify_builtin_token(
-    provider: &OAuth2ProviderKind,
-    settings: &OAuth2Settings,
-    id_token: &str,
-    jwks_manager: &JwksManager<ReqwestJwksFetcher>,
-) -> Result<serde_json::Map<String, serde_json::Value>, String> {
-    let provider_config = match provider {
-        OAuth2ProviderKind::Google => OidcProviderConfig {
-            name: "google-oauth2".to_string(),
-            issuer: "https://accounts.google.com".to_string(),
-            audience: settings
-                .google
-                .as_ref()
-                .map(|g| g.client_id.clone())
-                .unwrap_or_default(),
-            jwks_url: Some("https://www.googleapis.com/oauth2/v3/certs".to_string()),
-            token_source: TokenSource::Header {
-                name: "Authorization".to_string(),
-                prefix: Some("Bearer ".to_string()),
-            },
-            subject_claim: None,
-            email_claim: None,
-            display_name_claim: None,
-            role_claims: Vec::new(),
-        },
-        OAuth2ProviderKind::Microsoft => OidcProviderConfig {
-            name: "microsoft-oauth2".to_string(),
-            issuer: "https://login.microsoftonline.com/common/v2.0".to_string(),
-            audience: settings
-                .microsoft
-                .as_ref()
-                .map(|m| m.client_id.clone())
-                .unwrap_or_default(),
-            jwks_url: Some(
-                "https://login.microsoftonline.com/common/discovery/v2.0/keys".to_string(),
-            ),
-            token_source: TokenSource::Header {
-                name: "Authorization".to_string(),
-                prefix: Some("Bearer ".to_string()),
-            },
-            subject_claim: None,
-            email_claim: None,
-            display_name_claim: None,
-            role_claims: Vec::new(),
-        },
-        OAuth2ProviderKind::Custom(_) => return Err("Unexpected generic provider".into()),
-    };
-
-    jwks_manager
-        .verify(id_token, &provider_config)
-        .await
-        .map_err(|_| "Invalid builtin identity token".into())
-}
