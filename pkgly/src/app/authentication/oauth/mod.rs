@@ -25,7 +25,7 @@ use tracing::{trace, warn};
 
 use crate::app::config::{
     OAuth2GenericConfig, OAuth2GenericEndpoints, OAuth2GoogleConfig, OAuth2MicrosoftConfig,
-    OAuth2ProviderKind, OAuth2Settings,
+    OAuth2ProviderKind, OAuth2Settings, OidcProviderConfig, TokenSource,
 };
 
 mod generic;
@@ -181,6 +181,63 @@ impl OAuth2Service {
                 },
             )
             .collect()
+    }
+
+    /// Verify a built-in provider ID token with its fixed issuer and key URL.
+    /// Returns an error for a custom provider or an invalid identity token.
+    pub async fn verify_builtin_token(
+        &self,
+        provider: &OAuth2ProviderKind,
+        id_token: &str,
+        jwks_manager: &JwksManager<ReqwestJwksFetcher>,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        let settings = &self.settings;
+        let provider_config = match provider {
+            OAuth2ProviderKind::Google => OidcProviderConfig {
+                name: "google-oauth2".to_string(),
+                issuer: "https://accounts.google.com".to_string(),
+                audience: settings
+                    .google
+                    .as_ref()
+                    .map(|g| g.client_id.clone())
+                    .unwrap_or_default(),
+                jwks_url: Some("https://www.googleapis.com/oauth2/v3/certs".to_string()),
+                token_source: TokenSource::Header {
+                    name: "Authorization".to_string(),
+                    prefix: Some("Bearer ".to_string()),
+                },
+                subject_claim: None,
+                email_claim: None,
+                display_name_claim: None,
+                role_claims: Vec::new(),
+            },
+            OAuth2ProviderKind::Microsoft => OidcProviderConfig {
+                name: "microsoft-oauth2".to_string(),
+                issuer: "https://login.microsoftonline.com/common/v2.0".to_string(),
+                audience: settings
+                    .microsoft
+                    .as_ref()
+                    .map(|m| m.client_id.clone())
+                    .unwrap_or_default(),
+                jwks_url: Some(
+                    "https://login.microsoftonline.com/common/discovery/v2.0/keys".to_string(),
+                ),
+                token_source: TokenSource::Header {
+                    name: "Authorization".to_string(),
+                    prefix: Some("Bearer ".to_string()),
+                },
+                subject_claim: None,
+                email_claim: None,
+                display_name_claim: None,
+                role_claims: Vec::new(),
+            },
+            OAuth2ProviderKind::Custom(_) => return Err("Unexpected generic provider".into()),
+        };
+
+        jwks_manager
+            .verify(id_token, &provider_config)
+            .await
+            .map_err(|_| "Invalid builtin identity token".into())
     }
 
     /// Verify a generic ID token with its configured issuer, keys, audience, and saved nonce.
